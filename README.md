@@ -199,15 +199,12 @@ The directory contains `studio.sqlite3`, `uploads/`, `generated/`, `workspace/`,
 
 Set `CANARRY_DATA` to use a different data directory. Set `CANARRY_WORKSPACE` only when you intentionally want a separate workspace location. The legacy `OLLAMA_STUDIO_DATA` and `OLLAMA_STUDIO_WORKSPACE` environment variables remain accepted for backwards compatibility.
 
-### Automatic migration from 1.4.0 and earlier
-
-On first launch, the application copies data from the old Linux location `~/.local/share/ollama-studio/` and the previous source-folder `workspace/` into the new locations when applicable. It does not delete the old folders and does not overwrite files already present in the destination. The SQLite database is copied using SQLite's backup API. Review the startup logs and confirm your chats, projects, memories and uploads before manually removing any old backup.
 
 ### Backups
 
 Stop CanarryLookup before making a manual backup. Copy the complete platform-specific data directory shown above, including its database and subdirectories. Restoring means placing that directory back in the same location (or setting `CANARRY_DATA` to its restored location).
 
-The 1.6.0 release performs additive SQLite migrations. Existing chats, projects, memories, uploads and MCP records are assigned to the first owner device on its first visit. Existing files remain in the owner workspace. The migration does not reset or delete the database.
+
 
 ## Share CanarryLookup on your network
 
