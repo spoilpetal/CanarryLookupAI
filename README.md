@@ -2,7 +2,7 @@
 
 A local-first AI workspace with Ollama, OpenAI-compatible APIs, native Anthropic and Google Gemini adapters, workspace tools, long-term memory, projects, file attachments, pinned chats, and Model Context Protocol (MCP) tool servers.
 
-Repository: <https://github.com/spoilpetal/CanarryLookupAI>
+
 
 ## Contents
 
@@ -19,7 +19,6 @@ Repository: <https://github.com/spoilpetal/CanarryLookupAI>
 - [Firewall setup](#firewall-setup)
 - [Security notes](#security-notes)
 - [Cross-platform details](docs/PLATFORM.md)
-- [1.6.0 build report](BUILD-REPORT.md)
 - [Troubleshooting](#troubleshooting)
 - [Validation status](#validation-status)
 
