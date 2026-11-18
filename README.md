@@ -1,4 +1,4 @@
-<h1 align="center">CanarryLookup AI<sub>static</sub></h1>
+<h1 align="center">CanarryLookup AI<sub>super light weight</sub></h1>
 
 A local-first AI workspace with Ollama, OpenAI-compatible APIs, native Anthropic and Google Gemini adapters, workspace tools, long-term memory, projects, file attachments, pinned chats, and Model Context Protocol (MCP) tool servers.
 
@@ -300,14 +300,14 @@ The Settings screen can configure global authentication and owner-only tunnel cr
 
 ## Device pairing and private workspaces
 
-The first browser that opens the upgraded 1.6.0 data directory becomes the owner device. Open CanarryLookup in a browser on the host computer first so the host browser becomes the owner. The owner controls global network authentication, tunnel credentials and device pairing. A different browser/device is initially unpaired and cannot access workspace APIs until it receives a one-time code.
+The first browser that opens the CanarryLookup data directory becomes the owner device. Open CanarryLookup in a browser on the host computer first so the host browser becomes the owner. The owner controls global network authentication, tunnel credentials and device pairing. A different browser/device is initially unpaired and cannot access workspace APIs until it receives a one-time code.
 
 1. On the owner device, open **Settings → Device identity & privacy → Create pairing code**.
 2. On the new device, open the CanarryLookup LAN or remote URL and enter the code when prompted.
 3. Give the device a recognizable name. The code expires after 10 minutes and works once.
 4. The owner can review paired devices and revoke a device from the same section. CLI alternatives are `python app.py --devices` and `python app.py --revoke-device DEVICE_ID`.
 
-Chats, projects, memories, uploads, generated images, provider credentials, MCP servers and agent workspace files are scoped to the device identity. The owner device retains the pre-1.6.0 data. Each paired device gets a separate workspace directory under `device-workspaces/DEVICE_ID/`. Provider settings are separate per device; therefore a remote phone can use the host's local Ollama endpoint (the CanarryLookup server makes the provider request from the host) while keeping that phone's chats separate. A device can also configure its own cloud AI provider. Each device has one active provider configuration at a time; switch providers in Settings when needed. Different devices can use different providers simultaneously.
+Chats, projects, memories, uploads, generated images, provider credentials, MCP servers and agent workspace files are scoped to the device identity. The owner device retains the pre-CanarryLookup data. Each paired device gets a separate workspace directory under `device-workspaces/DEVICE_ID/`. Provider settings are separate per device; therefore a remote phone can use the host's local Ollama endpoint (the CanarryLookup server makes the provider request from the host) while keeping that phone's chats separate. A device can also configure its own cloud AI provider. Each device has one active provider configuration at a time; switch providers in Settings when needed. Different devices can use different providers simultaneously.
 
 The browser identity is stored in an HttpOnly, SameSite cookie. Do not copy browser profile data or the cookie to another person. Device revocation invalidates the stored identity; the next request from that browser will require pairing again. This is a personal multi-device workspace, not a hardened multi-tenant SaaS identity system.
 
