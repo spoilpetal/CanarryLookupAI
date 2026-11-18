@@ -71,7 +71,7 @@ Explore CanarryLookupAI's interface through the screenshots below.
 ### 1. Get the source
 
 ```bash
-git clone https://github.com/spoilpetal/CanarryLookupAI.git
+git clone https://github.com/zaynkhan100110/CanarryLookupAI.git
 cd CanarryLookupAI
 ```
 
