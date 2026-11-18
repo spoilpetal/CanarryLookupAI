@@ -1,4 +1,4 @@
-# CanarryLookup AI 1.6.0
+<h1 align="center">CanarryLookup AI<sub>static</sub></h1>
 
 A local-first AI workspace with Ollama, OpenAI-compatible APIs, native Anthropic and Google Gemini adapters, workspace tools, long-term memory, projects, file attachments, pinned chats, and Model Context Protocol (MCP) tool servers.
 
@@ -7,6 +7,7 @@ A local-first AI workspace with Ollama, OpenAI-compatible APIs, native Anthropic
 ## Contents
 
 - [Features](#features)
+- [Screenshots](#screenshots)
 - [Requirements](#requirements)
 - [Install on Windows, macOS and Linux](#install-on-windows-macos-and-linux)
 - [Run and update](#run-and-update)
@@ -40,6 +41,23 @@ A local-first AI workspace with Ollama, OpenAI-compatible APIs, native Anthropic
 - Device-isolated chats, projects, memories, uploads, generated images, provider settings, MCP servers and workspace directories.
 - Per-device Normal mode and opt-in Harness mode. Normal mode disables built-in filesystem/shell tools; Harness mode exposes the existing workspace tools and allowlisted command runner only on that device.
 - Encrypted per-device settings values using a local key file; the key must be backed up with the data directory.
+
+
+## Screenshots
+
+Explore CanarryLookupAI's interface through the screenshots below.
+
+- Screenshots using <a href="https://github.com/zaynkhan100110/CyberShot" target="_blank">CyberShot</a>
+
+### Main interface with both side dock preview
+
+![Main interface with side dock](https://raw.githubusercontent.com/spoilpetal/Picture_Vault/main/CanarryLookupAI/main_interface.png)
+
+
+### Main interface without both side dock preview
+
+![Main interface with out side dock](https://raw.githubusercontent.com/spoilpetal/Picture_Vault/main/CanarryLookupAI/main_interface_without_border.png)
+
 
 ## Requirements
 
