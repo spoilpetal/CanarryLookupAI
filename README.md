@@ -1,4 +1,4 @@
-# CanarryLookup AI 1.6.0
+<h1 align="center">CanarryLookup AI<sub>static</sub></h1>
 
 A local-first AI workspace with Ollama, OpenAI-compatible APIs, native Anthropic and Google Gemini adapters, workspace tools, long-term memory, projects, file attachments, pinned chats, and Model Context Protocol (MCP) tool servers.
 
