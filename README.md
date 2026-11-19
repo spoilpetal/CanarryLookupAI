@@ -21,7 +21,6 @@ A local-first AI workspace with Ollama, OpenAI-compatible APIs, native Anthropic
 - [Security notes](#security-notes)
 - [Cross-platform details](docs/PLATFORM.md)
 - [Troubleshooting](#troubleshooting)
-- [Validation status](#validation-status)
 
 ## Features
 
@@ -361,9 +360,6 @@ See [`docs/SECURITY.md`](docs/SECURITY.md) and [`docs/DEPLOYMENT.md`](docs/DEPLO
 
 **Public tunnel fails** — Install the selected provider CLI, complete its account/device setup, enable authentication with a 16+ character password, then try again. Review the provider CLI output in the host terminal.
 
-## Validation status
-
-The source package is statically validated. Local API/database paths, legacy SQLite migration, pinned chats, remote authentication, endpoint protections, MCP stdio/Streamable HTTP protocol flows, Anthropic/Gemini streaming and function-call loops, and Gemini image-file persistence were exercised with local or mocked protocol fixtures. No real cloud credentials or third-party production MCP server were available, so live inference, provider billing/account entitlements, image-generation account access, and remote HTTPS deployment remain operator-side validation. Browser automation could not be completed in the build environment because its Chromium policy blocked navigation to the local test server. Do not treat mocked protocol tests or a successful model-list request as proof that every provider/model feature is supported.
 
 ### Optional systemd service
 
