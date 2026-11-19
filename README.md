@@ -74,7 +74,6 @@ git clone https://github.com/spoilpetal/CanarryLookupAI.git
 cd CanarryLookupAI
 ```
 
-For a release ZIP, extract it and open a terminal in the extracted `CanarryLookupAI` folder instead.
 
 ### 2. Create an environment and install dependencies
 
