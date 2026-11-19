@@ -1,4 +1,4 @@
-# Security model and limitations — 1.6.0
+# Security model and limitations
 
 ## Application controls
 
@@ -16,7 +16,7 @@
 
 Per-device settings values, including cloud provider API keys and ngrok/Cloudflare tunnel tokens, are encrypted using Fernet. The encryption key is stored in `.canarry-device-secrets.key` in the application data directory and is restricted to the current OS user where supported. Back up the key and database together. If the key is lost, encrypted settings cannot be recovered. MCP server configuration records (including configured stdio environment values and HTTP headers) are stored in SQLite and are not separately encrypted; protect the database and backups. The SQLite database file is chmod 0600 where supported.
 
-The owner device’s pre-1.6.0 records are migrated to the first owner identity. Other devices receive isolated data scopes. A browser’s device cookie is a bearer identity: anyone who steals the cookie can act as that device. Device revocation removes the identity record, making the cookie unusable.
+The owner device’s pre-CanarryLookupAI records are migrated to the first owner identity. Other devices receive isolated data scopes. A browser’s device cookie is a bearer identity: anyone who steals the cookie can act as that device. Device revocation removes the identity record, making the cookie unusable.
 
 ## Harness and MCP limitations
 
