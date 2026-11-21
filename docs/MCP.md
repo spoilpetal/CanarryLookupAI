@@ -1,4 +1,4 @@
-# Model Context Protocol (MCP) — 1.6.0
+# Model Context Protocol (MCP)
 
 CanarryLookup supports MCP tool discovery and invocation through local stdio child processes and MCP Streamable HTTP endpoints. Connected tools are offered to the model when Agent mode is enabled.
 

@@ -5,6 +5,7 @@
 <aside class="sidebar">
  <div class="brand"><button class="panel-toggle" id="hideLeft" title="Hide sidebar" aria-label="Hide sidebar">‹</button><div class="brandmark"><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M5 29c1-12 10-21 22-20 7 1 12 5 14 12-6-2-11-1-15 3 6 1 9 4 11 9-8-2-14-1-19 4-5-1-10-4-13-8Z"/><path d="M9 32c7 1 13-1 18-6" fill="none" stroke="#a7e66b" stroke-width="2.5" stroke-linecap="round"/><circle cx="34" cy="17" r="1.8" fill="#a7e66b"/></svg></div><div><b>CanarryLookup <span>AI</span></b><small>YOUR INTELLIGENCE WORKSPACE</small></div></div>
  <button class="newchat" id="newChat"><span>＋</span> New conversation</button>
+ <button class="newchat engineer-launch" id="openProjectEngineer"><span>⌘</span> Project Engineer</button>
  <div class="side-label">PROJECTS <button id="newProject" class="tiny-add" title="Create project folder">＋</button></div><div id="projectList" class="project-list"></div>
  <div class="side-label history-label">CONVERSATIONS <button id="exportAllChats" class="tiny-add" title="Export all conversations as Markdown files">⇩</button></div><div id="history" class="history"></div>
  <div class="sidebar-bottom"><div class="connection"><span class="dot" id="statusDot"></span><div><b id="statusText">Connecting…</b><small id="providerStatus">Checking provider</small></div></div><button class="settings-btn" id="settingsBtn">⚙ <span>Settings & providers</span></button></div>
@@ -21,7 +22,7 @@
   <div class="composer-meta"><span class="provider-pill" id="providerPill">CONNECTING</span><select id="modelSelect" class="model-select" aria-label="Choose model"><option>Loading models…</option></select><span id="modelMeta" class="hint"></span><span class="meta-spacer"></span><button type="button" class="text-action" id="clearBtn">＋ New chat</button></div>
   <div id="attachmentList" class="attachment-list"></div>
   <textarea id="prompt" rows="1" placeholder="Message CanarryLookup AI… (Enter to send, Shift+Enter for newline)"></textarea>
-  <div class="composer-bottom"><div class="composer-tools"><button type="button" class="attach-btn" id="fileButton" title="Attach up to 20 files">＋ Attach</button><input id="fileInput" type="file" multiple hidden><label class="agent-toggle"><input type="checkbox" id="agentToggle" checked><span class="switch"></span><span>Agent</span></label><label class="agent-toggle memory-toggle"><input type="checkbox" id="memoryToggle" checked><span class="switch"></span><span>Memory</span></label><span class="hint" id="uploadHint">50 MB / file · up to 20 files</span></div><div class="send-actions"><button id="imageBtn" class="image-btn" title="Generate an image with a compatible provider">✧ Image</button><button id="sendBtn" class="send" title="Send">↑</button></div></div>
+  <div class="composer-bottom"><div class="composer-tools"><button type="button" class="attach-btn" id="fileButton" title="Attach up to 20 files">＋ Attach</button><input id="fileInput" type="file" multiple hidden><label class="agent-toggle"><input type="checkbox" id="agentToggle" checked><span class="switch"></span><span>Agent</span></label><label class="agent-toggle memory-toggle"><input type="checkbox" id="memoryToggle" checked><span class="switch"></span><span>Memory</span></label><span class="hint" id="uploadHint">50 MB / file · up to 20 files</span></div><div class="send-actions"><button id="voiceMic" class="image-btn voice-control" type="button" title="Start voice input" aria-label="Start voice input">🎙 Voice</button><button id="voiceOutput" class="image-btn voice-control" type="button" title="Enable spoken responses" aria-pressed="false">🔈 Voice reply: Off</button><button id="imageBtn" class="image-btn" title="Generate an image with a compatible provider">✧ Image</button><button id="sendBtn" class="send" title="Send">↑</button></div></div>
  </div><div class="footnote">CanarryLookup AI · Local-first, provider-flexible · Verify important actions</div></footer>
 </main>
 <aside class="rightbar"><div class="right-head"><span>CONVERSATION MAP</span><button class="panel-toggle" id="hideRight" title="Hide conversation map" aria-label="Hide conversation map">›</button></div><div class="outline-note">Your instructions appear here as navigation points.</div><div id="outline" class="outline"><div class="outline-empty">No instructions yet</div></div><div class="right-bottom"><div class="shield">⬡</div><b>Your workspace, your control.</b><p>Local data stays on this machine. Cloud providers receive requests you send to them.</p></div></aside>
@@ -68,5 +69,32 @@
  <section class="settings-section"><h3>Uploads & privacy</h3><p class="setting-help">Up to 20 files per turn, 50 MB per file. Text, PDF and DOCX content can be extracted. Images are passed to vision-capable models; binary files are stored but not interpreted. Image generation is available only through compatible image-generation APIs.</p></section>
  <div class="modal-footer"><button class="primary" id="saveSettings">Save preferences</button></div>
 </div></div>
-<button id="showLeft" class="restore-panel restore-left" aria-label="Show sidebar" title="Show sidebar">☰</button><button id="showRight" class="restore-panel restore-right" aria-label="Show conversation map" title="Show conversation map">↳</button>
+ 
+<div class="engineer-backdrop" id="engineerModal" aria-hidden="true">
+ <section class="engineer-panel" role="dialog" aria-modal="true" aria-labelledby="engineerTitle">
+  <header class="engineer-head"><div><div class="eyebrow">LOCAL SOFTWARE ENGINEERING</div><h2 id="engineerTitle">Project Engineer</h2><p>Import a source archive, ask your selected model to understand it, implement changes, run commands and export the result.</p></div><button id="closeProjectEngineer" class="modal-close" aria-label="Close">×</button></header>
+  <div class="engineer-grid">
+   <aside class="engineer-side">
+    <h3>Project source</h3>
+    <label>Imported projects<select id="engineerProjectSelect"><option value="">Choose a project</option></select></label><label class="engineer-upload">Import archive<input id="engineerArchive" type="file" accept=".zip,.7z,.rar,.tar,.gz,.tgz,.tar.gz,.tar.xz,.tar.bz2"></label>
+    <p class="setting-help">ZIP, 7Z, RAR, TAR, GZ and compressed TAR. RAR extraction needs an installed backend such as unrar, unar or bsdtar.</p>
+    <div id="engineerProjectStatus" class="engineer-status">No project imported yet.</div>
+    <div id="engineerFileList" class="engineer-files"></div>
+    <label>Export format<select id="engineerExportFormat"><option value="zip">ZIP</option><option value="7z">7Z</option><option value="tar.gz">TAR.GZ</option><option value="tar">TAR</option><option value="rar">RAR (requires rar encoder)</option></select></label>
+    <button id="engineerExport" class="secondary" disabled>Export project</button>
+    <p class="setting-help">RAR archives can be imported. RAR creation is not provided because its encoder is proprietary; export as ZIP, 7Z or TAR instead.</p>
+   </aside>
+   <main class="engineer-main">
+    <div class="engineer-toolbar"><span id="engineerModelLabel">Using selected chat model</span><label class="setting-check"><input type="checkbox" id="engineerThink"> Think / reasoning</label><label class="setting-check"><input type="checkbox" id="engineerWeb" checked> Web search available</label></div>
+    <p class="setting-help" id="engineerCapability">Thinking is enabled only when supported by the selected model/provider. Web search is available to the agent when needed.</p>
+    <label for="engineerTask">Development task</label>
+    <textarea id="engineerTask" rows="5" placeholder="Describe what you want implemented. The agent can inspect and modify the project, run builds and tests, search documentation, and iterate until it completes or encounters a real blocker."></textarea>
+    <div class="engineer-actions"><button id="engineerRun" class="primary" disabled>Start engineering task</button><button id="engineerStop" class="secondary" hidden>Stop</button><button id="engineerRetry" class="secondary" disabled title="Run the previous instruction again">↻ Retry last task</button><button id="engineerReuse" class="secondary" disabled title="Put the previous instruction back in the prompt">↩ Reuse prompt</button><button id="engineerReload" class="secondary" disabled title="Reload the extracted project file list">⟳ Reload files</button></div>
+    <div class="engineer-output-head"><span>Agent activity & response</span><span id="engineerRunState" class="engineer-run-state" data-state="idle">Ready</span><div class="engineer-output-actions"><button id="engineerClearOutput" class="copy-btn" type="button" title="Clear visible activity">Clear</button><button id="engineerCopyAll" class="copy-btn" type="button" title="Copy all output">▢ Copy all</button></div></div>
+    <div id="engineerOutput" class="engineer-output" aria-live="polite"><p class="muted">Import a project archive to begin.</p></div>
+   </main>
+  </div>
+ </section>
+</div>
+\n<button id="showLeft" class="restore-panel restore-left" aria-label="Show sidebar" title="Show sidebar">☰</button><button id="showRight" class="restore-panel restore-right" aria-label="Show conversation map" title="Show conversation map">↳</button>
 <script src="/static/app.js"></script></body></html>

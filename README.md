@@ -12,6 +12,7 @@ A local-first AI workspace with Ollama, OpenAI-compatible APIs, native Anthropic
 - [Install on Windows, macOS and Linux](#install-on-windows-macos-and-linux)
 - [Run and update](#run-and-update)
 - [Connect an AI provider](#connect-an-ai-provider)
+- [Project Engineer](#project-engineer)
 - [MCP servers](#mcp-servers)
 - [Data and backups](#data-and-backups)
 - [Share CanarryLookup on your network](#share-canarrylookup-on-your-network)
@@ -29,16 +30,22 @@ A local-first AI workspace with Ollama, OpenAI-compatible APIs, native Anthropic
 - Native Google Gemini `streamGenerateContent` adapter, including streaming, image input and function calling.
 - Gemini image generation for models that expose image output; OpenAI-compatible image-generation endpoints are also supported.
 - Agent mode with workspace tools and connected MCP tools.
+- Project Engineer: import and inspect complete source projects, ask the selected model to implement substantial changes, edit files, run builds/tests, iterate on errors, use web search and export the updated project.
+- Project archive import: ZIP, 7Z, RAR, TAR, GZ, TGZ, TAR.GZ, TAR.XZ and TAR.BZ2.
+- Project export: ZIP, 7Z, TAR and TAR.GZ; RAR export is available when the proprietary `rar` encoder is installed.
+- Optional model thinking/reasoning control when the selected Ollama model reports thinking capability.
 - MCP stdio and Streamable HTTP transports.
 - Persistent conversations, rename/delete, pin/unpin, individual Markdown export and one-click ZIP export of all chats, projects and local SQLite storage.
-- File attachments, text extraction for common formats, PDF and DOCX extraction, and vision image input.
+- File attachments with ZIP/TAR/7Z/RAR extraction, archive file-tree indexing and text previews for source-code inspection in ordinary chats, plus PDF/DOCX extraction and vision image input.
+- Visible copy-response and copy-code controls, response retry, and previous-prompt reuse controls.
+- Optional browser voice input (speech-to-text) and spoken assistant replies (text-to-speech).
 - Long-term user-managed memory, system instructions, temperature and response-token settings.
 - Theme selection, compact messages, Enter-to-send, automatic scroll and default Agent mode preferences.
 - Responsive layouts for compact windows, tablets, phones and short displays; collapsible sidebars, animated welcome state, reduced-motion support and matching browser-tab / welcome-page branding.
 - Easy network sharing: automatic LAN address discovery, optional global username/password protection, and managed Cloudflare, ngrok and Tailscale Funnel connections.
 - First-device owner identity, one-time device pairing codes, device revocation and owner-only worldwide tunnel credential controls.
 - Device-isolated chats, projects, memories, uploads, generated images, provider settings, MCP servers and workspace directories.
-- Per-device Normal mode and opt-in Harness mode. Normal mode disables built-in filesystem/shell tools; Harness mode exposes the existing workspace tools and allowlisted command runner only on that device.
+- Per-device Normal mode and opt-in Harness mode. Normal mode disables built-in filesystem/shell tools. Harness mode enables project file editing and project-scoped command execution for that device.
 - Encrypted per-device settings values using a local key file; the key must be backed up with the data directory.
 
 
@@ -63,7 +70,7 @@ Explore CanarryLookupAI's interface through the screenshots below.
 - Python 3.11 or newer (Python 3.12 recommended).
 - Linux, macOS or Windows with a supported Python build.
 - Ollama for local inference, or an API key for a hosted provider.
-- `uvicorn` is installed through `requirements.txt`.
+- `uvicorn`, `py7zr`, `rarfile` and `ddgs` are installed through `requirements.txt`.
 
 ## Install on Windows, macOS and Linux
 
@@ -170,6 +177,33 @@ Create an API key in Google AI Studio. Select **Google Gemini API**, keep the de
 
 Choose **OpenAI-compatible API**, select a preset or Custom endpoint, and enter the provider's base URL ending in `/v1` where required. Not every provider implements every optional OpenAI feature. Tool calls, vision, token limits and image generation depend on the provider and selected model.
 
+## Chat controls and voice
+
+Every message has a visible **Copy response** action. Code blocks have their own **Copy code** action. Assistant messages also provide **Retry** (resend the previous user instruction) and **Reuse prompt** (put it back in the composer without sending).
+
+The composer includes **Voice** for speech input and **Voice reply** for spoken assistant responses. Voice input uses the browser's Web Speech recognition implementation when available; it transcribes the utterance into the composer and sends it when recognition finishes. Spoken replies use the browser's speech synthesis engine. Browser support varies: Chromium-based browsers generally provide the broadest speech-recognition support, while Firefox may not expose the recognition API. Depending on the browser, speech recognition may be processed by the browser vendor's service; it is not guaranteed to be fully offline. Microphone access generally requires HTTPS or localhost plus browser permission. Voice reply is off by default.
+
+## Inspect archives in ordinary chat
+
+Attach a ZIP, 7Z, RAR, TAR, GZ, TGZ, TAR.GZ, TAR.XZ or TAR.BZ2 file directly to a normal chat. CanarryLookup extracts supported archives into that device's workspace, includes the extracted file tree and bounded text previews in the model context, and makes the extracted files available to the workspace tools in Harness mode. If the model asks to list the original archive filename, the app resolves that filename to the extracted directory using the current attachment IDs and, as a fallback, the device's saved upload records. Follow-up `list_files` and `read_file` calls can use paths relative to the archive root. The upload UI reports extraction failures instead of silently treating an unextracted archive as available. Binary files remain in the extracted tree but are not converted into text. Archive extraction has safety checks and format support depends on the installed optional extraction dependencies.
+
+## Project Engineer
+
+Open **Project Engineer** from the left sidebar.
+
+1. Enable **Harness mode** for this device in **Settings → Device identity & privacy**. Project import, file editing and command execution are host-side actions and are intentionally unavailable in Normal mode.
+2. Import a project archive. Supported inputs are ZIP, 7Z, RAR, TAR, GZ, TGZ, TAR.GZ, TAR.XZ and TAR.BZ2.
+3. Select a model in the main chat model selector. Project Engineer uses that selected model.
+4. Describe the work. The agent can inspect the repository, read files, write or replace files, run project commands, search the web for documentation and repeat implementation/build/test cycles until it completes or encounters a real blocker.
+5. Enable **Think / reasoning** only when the selected Ollama model reports thinking capability. The setting is sent as Ollama's `think` option; unsupported models/providers do not expose the toggle.
+6. Export the modified source as ZIP, 7Z, TAR or TAR.GZ. RAR export is offered when the proprietary `rar` command-line encoder is installed.
+
+Project archives are extracted into the current device's private workspace under `engine-projects/`. Imported source trees are separate from the original archive and from other paired devices' project workspaces. ZIP/TAR/RAR paths are checked to prevent path traversal; archive links and special files are not extracted. RAR extraction requires `rarfile` plus an installed backend such as `unrar`, `unar` or `bsdtar`. 7Z support uses `py7zr`.
+
+Project Engineer supports Ollama's native chat/tool API and OpenAI-compatible chat-completions tool calling. Anthropic and Gemini remain available for ordinary chat and their existing integrations; their adapters are not currently wired into Project Engineer's coding-tool loop. Web search uses the `ddgs` package and requires network access.
+
+Project commands execute on the CanarryLookup host as the operating-system account running the application, with the imported project's source directory as the working directory. The agent can invoke installed build tools and other executables available to that account. Harness mode is an explicit permission boundary, not an OS sandbox. Use a dedicated low-privilege account and only import source archives you trust. Review changes and command output before using or distributing the result. Large projects and weaker local models may need multiple tasks or follow-up prompts, but the agent is not restricted to small changes.
+
 ## MCP servers
 
 CanarryLookup can connect MCP tool servers from **Settings → MCP tool servers**. Connected tools are offered to the model only while Agent mode is enabled. Every MCP server and its configured credentials belong to the browser/device identity that created it. Other paired devices cannot list, edit, test or invoke that device’s MCP servers.
@@ -210,7 +244,7 @@ CanarryLookup stores its database, uploads, generated images and default workspa
 | macOS | `~/Library/Application Support/CanarryLookupAI/` |
 | Linux | `$XDG_DATA_HOME/CanarryLookupAI/`, or `~/.local/share/CanarryLookupAI/` when `XDG_DATA_HOME` is not set |
 
-The directory contains `studio.sqlite3`, `uploads/`, `generated/`, `workspace/`, `device-workspaces/`, and `.canarry-device-secrets.key`. The encryption key is required to decrypt device-scoped provider and tunnel settings; back it up securely together with the database. Losing the key makes encrypted settings unrecoverable (chats and other non-secret data remain in SQLite). The database filename is retained for compatibility with earlier releases.
+The directory contains `studio.sqlite3`, `uploads/`, `generated/`, `workspace/`, `device-workspaces/`, and `.canarry-device-secrets.key`. Project Engineer imports live under each device's `workspace/engine-projects/` directory. The encryption key is required to decrypt device-scoped provider and tunnel settings; back it up securely together with the database. Losing the key makes encrypted settings unrecoverable (chats and other non-secret data remain in SQLite). The database filename is retained for compatibility with earlier releases.
 
 Set `CANARRY_DATA` to use a different data directory. Set `CANARRY_WORKSPACE` only when you intentionally want a separate workspace location. The legacy `OLLAMA_STUDIO_DATA` and `OLLAMA_STUDIO_WORKSPACE` environment variables remain accepted for backwards compatibility.
 
@@ -293,6 +327,7 @@ A tunnel makes the app reachable from the public internet. Anyone who can reach 
 | `CANARRY_WORKSPACE` | `<CANARRY_DATA>/workspace` | Agent workspace root. |
 | `MAX_TOOL_ROUNDS` | `6` | Maximum agent tool-call rounds per response. |
 | `COMMAND_TIMEOUT` | `45` | Maximum seconds for allowlisted workspace commands. |
+| `CANARRY_MAX_PROJECT_ARCHIVE` | `2147483648` | Maximum uploaded project archive size in bytes (default 2 GiB). |
 
 The Settings screen can configure global authentication and owner-only tunnel credentials. Per-device settings and MCP configuration are encrypted with `.canarry-device-secrets.key`; global network authentication settings are encrypted too. Protect the data directory and back up the key with the database.
 
@@ -314,7 +349,7 @@ The browser identity is stored in an HttpOnly, SameSite cookie. Do not copy brow
 Each device has its own mode in **Settings → Device identity & privacy**.
 
 - **Normal mode (default):** built-in filesystem and command tools are not offered to the model. MCP servers configured on that device remain available when Agent mode is enabled.
-- **Harness mode:** enables the existing workspace file tools and allowlisted command runner for that device. The command runner uses `shell=False`, a fixed executable allowlist and a timeout, but it is not an OS sandbox. In particular, Python/Node tooling can execute code with the CanarryLookup process user's permissions. Enable only on a trusted host/device and run CanarryLookup as an unprivileged OS account.
+- **Harness mode:** enables the device's workspace tools and Project Engineer. Project Engineer can invoke installed project/build commands as the CanarryLookup process user, with the imported source as its working directory. This is not an OS sandbox; commands and build tools can access anything that operating-system account can access. Enable only on a trusted host/device and run CanarryLookup as an unprivileged OS account.
 
 Harness mode runs on the CanarryLookup host; it does not control the remote phone/browser computer and does not provide full desktop GUI automation or unrestricted remote-control features. MCP servers are independent of the Harness toggle; an MCP server can have its own external/system permissions even while the app is in Normal mode. Only connect trusted MCP servers and restrict their permissions.
 
@@ -337,7 +372,7 @@ Use the down-arrow action beside an individual conversation to export it as Mark
 - LAN sharing is password-free by default. Enable HTTP Basic authentication before enabling a public tunnel; public tunnels require a username and a password of at least 16 characters. Never expose the app directly to the internet without authentication.
 - Cross-origin browser mutations are rejected when the Origin/Fetch Metadata headers indicate a foreign origin.
 - Basic per-IP request throttling and security headers are applied in the application middleware.
-- Workspace path traversal is blocked; workspace command execution is restricted to a fixed executable allowlist and uses no shell.
+- Workspace and imported-project path traversal is blocked. Project Engineer command execution uses argument arrays (no shell interpolation) but permits executables available to the CanarryLookup operating-system account when Harness mode is enabled.
 - Per-device settings values (including provider API keys and tunnel tokens) are encrypted with a Fernet key in `.canarry-device-secrets.key`; keep that key private and back it up securely. MCP server configurations are also encrypted at rest in the SQLite database. Protect the data directory and backups regardless.
 - The rate limiter is process-local and not a replacement for a reverse-proxy/WAF limit. It does not coordinate across multiple worker processes.
 - Device identities separate private data and MCP connections on this single-host personal deployment. This is not a hardened multi-tenant SaaS; anyone who obtains a paired device cookie can act as that device. Owner pairing codes and browser profiles must be protected.
@@ -345,9 +380,29 @@ Use the down-arrow action beside an individual conversation to export it as Mark
 
 See [`docs/SECURITY.md`](docs/SECURITY.md) and [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
+### Project Engineer troubleshooting
+
+**Harness mode required** — Open Settings → Device identity & privacy and enable Harness mode on the device importing the source archive.
+
+**7Z import/export unavailable** — Reinstall dependencies with `pip install -r requirements.txt` inside the active virtual environment.
+
+**RAR extraction fails** — Install `unrar`, `unar` or `bsdtar` using your operating system's package manager. `rarfile` is a Python wrapper and does not include the proprietary RAR extraction executable.
+
+**RAR export unavailable** — Install the official `rar` command-line encoder and ensure it is on the CanarryLookup host's PATH. RAR is a proprietary format; ZIP, 7Z and TAR.GZ are alternatives.
+
+**Thinking option unavailable** — The selected model did not report a thinking capability through Ollama's model metadata. Choose a model that supports thinking.
+
+**Web search unavailable** — Confirm `ddgs` is installed and the host has internet access.
+
+**Agent command fails** — Check that the required build tools (for example Python, Node.js, npm, Rust/Cargo, CMake or system libraries) are installed for the operating-system account running CanarryLookup.
+
 ## Troubleshooting
 
 **Provider unavailable** — Check that Ollama is running or that the endpoint/API key is correct. For Ollama, `ollama list` and `curl http://127.0.0.1:11434/api/tags` are useful checks.
+
+**Model capability request returns 404** — Update to this build. Model names containing a namespace slash (for example `huihui_ai/model:tag`) are accepted by the capability route; the slash must not be treated as a second URL route segment.
+
+**`list_files` says `Directory not found` for an attached ZIP** — Confirm the upload chip reports that extraction succeeded. Reattach the ZIP after updating; the agent now resolves the archive filename to its extracted folder and carries that root through follow-up file reads. If the upload reports an extraction error, install the optional archive dependency/helper noted above and upload it again. For full source modification/build work, use Project Engineer and import the archive there.
 
 **No models listed** — Verify the selected provider's model access. Anthropic/Gemini model availability depends on account access and API support.
 
@@ -403,7 +458,7 @@ Adjust systemd sandboxing for your selected workspace and MCP server executables
 
 ## Agent execution boundary
 
-Agent mode is not a security sandbox. The workspace tools constrain file paths to the workspace, but the allowlisted `python`, `node`, `npm`, `git` and related commands can execute code with the CanarryLookup operating-system account's permissions. MCP tools can have similarly broad permissions. Only expose Agent mode to trusted users and run the service under a dedicated low-privilege account.
+Agent mode and Project Engineer are not security sandboxes. Project Engineer confines file operations and the command working directory to the imported project, but executed programs can access resources permitted to the CanarryLookup operating-system account. MCP tools can have similarly broad permissions. Only enable Harness mode for trusted devices, import trusted archives, and run the service under a dedicated low-privilege account.
 
 ## Network access and mobile devices
 
@@ -428,3 +483,9 @@ Important:
 - Configure your firewall to allow TCP port 8080 from your trusted LAN.
 - Your devices must be on a network that permits device-to-device communication.
 - Do not expose an unauthenticated service directly to the internet.
+
+### Project Engineer reliability with local Ollama models
+
+Project Engineer uses a text-based JSON tool-request protocol with Ollama to avoid malformed native tool-call argument parsing in smaller local models. It supplies a recursive, bounded project tree at task start, and `project_list_files` lists nested files by default. Tool results are returned to the model as explicit follow-up messages. Provider errors embedded in successful HTTP streaming responses are surfaced in the chat instead of appearing as an empty answer.
+
+The Project Engineer activity panel shows running, completed, stopped, and failed states. Tool errors are expanded automatically and can be copied with their arguments and results.

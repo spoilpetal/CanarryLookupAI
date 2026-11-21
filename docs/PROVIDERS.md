@@ -1,4 +1,4 @@
-# Provider adapters and remote access — 1.6.0
+# Provider adapters and remote access
 
 ## AI providers
 

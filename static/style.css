@@ -171,3 +171,321 @@ body { overflow:hidden; }
 @media(max-width:680px){.network-card{padding:11px}.network-card-title{align-items:flex-start;flex-direction:column}.network-address-list{flex-direction:column}.network-address-list a{width:100%;box-sizing:border-box}}
 
 .owner-only[hidden]{display:none!important}
+
+
+/* Project Engineer */
+.engineer-launch{margin-top:8px;background:linear-gradient(110deg,rgba(135,190,94,.18),rgba(93,143,210,.12));border:1px solid var(--line)}
+.engineer-backdrop{position:fixed;inset:0;z-index:80;background:rgba(4,7,12,.78);display:none;align-items:center;justify-content:center;padding:2vh 2vw}
+.engineer-backdrop.open{display:flex}
+.engineer-panel{width:min(1500px,98vw);height:min(94vh,1000px);background:var(--panel);border:1px solid var(--line);border-radius:18px;box-shadow:0 24px 90px #0009;display:flex;flex-direction:column;overflow:hidden}
+.engineer-head{display:flex;justify-content:space-between;gap:20px;padding:22px 26px;border-bottom:1px solid var(--line)}
+.engineer-head h2{margin:4px 0;font-size:1.55rem}.engineer-head p{margin:4px 0;color:var(--muted);max-width:780px}
+.engineer-grid{display:grid;grid-template-columns:minmax(230px,310px) minmax(0,1fr);min-height:0;flex:1}
+.engineer-side{padding:20px;border-right:1px solid var(--line);overflow:auto;display:flex;flex-direction:column;gap:12px}
+.engineer-side h3{margin:0}.engineer-upload{display:block;text-align:center;padding:13px;border:1px dashed var(--accent);border-radius:10px;cursor:pointer;background:var(--surface)}
+.engineer-upload input{display:block;width:100%;margin-top:8px;font-size:.8rem}
+.engineer-status{font-size:.86rem;color:var(--muted);overflow-wrap:anywhere}
+.engineer-files{border:1px solid var(--line);border-radius:9px;padding:8px;max-height:38vh;overflow:auto;font:12px/1.55 ui-monospace,monospace}
+.engineer-files div{padding:2px 0;overflow-wrap:anywhere;border-bottom:1px solid var(--line)}
+.engineer-side label:not(.engineer-upload){display:flex;flex-direction:column;gap:6px;font-size:.85rem}
+.engineer-main{padding:20px 24px;overflow:auto;display:flex;flex-direction:column;gap:12px;min-width:0}
+.engineer-toolbar{display:flex;align-items:center;gap:16px;flex-wrap:wrap;justify-content:space-between}
+.engineer-main>label{font-weight:650}
+.engineer-main textarea{width:100%;resize:vertical;min-height:120px;background:var(--surface);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:12px;font:inherit}
+.engineer-actions{display:flex;gap:9px}
+.engineer-output{min-height:180px;flex:1;overflow:auto;border:1px solid var(--line);border-radius:10px;background:var(--surface);padding:12px}
+.engineer-log{padding:5px 0;color:var(--muted);white-space:pre-wrap;overflow-wrap:anywhere}
+.engineer-log.success{color:var(--accent)}.engineer-log.error{color:#f08a8a}.engineer-log.notice{color:#e6bd72}
+.engineer-token,.engineer-tool pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:50vh;overflow:auto;font:12px/1.55 ui-monospace,monospace}
+.engineer-tool{margin:9px 0;border:1px solid var(--line);border-radius:8px;padding:8px}
+.engineer-tool summary{cursor:pointer;font-size:.85rem;color:var(--accent)}
+.engineer-tool pre{margin-bottom:0}
+@media(max-width:760px){.engineer-backdrop{padding:0}.engineer-panel{width:100vw;height:100dvh;border-radius:0}.engineer-grid{grid-template-columns:1fr;grid-template-rows:minmax(170px,32%) 1fr}.engineer-side{border-right:0;border-bottom:1px solid var(--line);padding:12px}.engineer-files{max-height:90px}.engineer-main{padding:12px}.engineer-head{padding:14px}}
+
+/* Copy, retry and prompt-reuse controls */
+.message-body{display:flex;flex-direction:column;gap:5px;min-width:0;max-width:calc(100% - 40px)}
+.message-body .bubble{max-width:100%}
+.message-actions{display:flex;gap:7px;flex-wrap:wrap;opacity:.72}
+.message-actions:hover{opacity:1}
+.copy-btn{border:1px solid var(--line);background:var(--panel2);color:var(--muted);border-radius:6px;padding:4px 8px;font:10px var(--mono);cursor:pointer}
+.copy-btn:hover{color:var(--text);border-color:var(--accent)}
+.bubble pre{position:relative;padding-top:34px}
+.code-copy{position:absolute;right:7px;top:6px}
+.engineer-actions{flex-wrap:wrap;align-items:center}
+.engineer-output-head{display:flex;align-items:center;justify-content:space-between;color:var(--muted);font-size:11px;font-weight:650}
+.engineer-log{position:relative;padding-right:34px}
+.inline-copy{position:absolute;right:0;top:2px;padding:1px 6px}
+.engineer-tool pre{position:relative;padding-top:34px}
+.engineer-token{position:relative;padding:12px 12px 36px;background:var(--bg);border:1px solid var(--line);border-radius:8px}
+@media(max-width:760px){.message-body{max-width:calc(100% - 32px)}.message-actions{opacity:1}.engineer-actions button{font-size:11px;padding:7px 9px}}
+
+/* High-visibility response controls: remain visible on desktop and touch screens. */
+.message-actions{opacity:1!important;visibility:visible;display:flex;gap:8px;margin-top:4px}
+.message-actions .copy-btn{font-size:11px;padding:6px 10px;color:var(--text);background:var(--panel2);border-color:var(--line);min-height:29px}
+.message-actions .copy-btn:hover,.message-actions .copy-btn:focus-visible{border-color:var(--accent);color:var(--accent)}
+.bubble pre{padding-top:42px!important}
+.bubble pre .code-copy,.engineer-tool pre .code-copy,.engineer-token .code-copy{z-index:2;display:inline-flex;align-items:center;min-height:25px;padding:4px 9px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px}
+.engineer-actions button{min-height:32px}
+.voice-control{min-height:34px;padding:0 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--text);font-size:11px;cursor:pointer}
+.voice-control.voice-active{border-color:var(--accent);color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 15%,transparent)}
+@media(max-width:760px){.message-actions{opacity:1!important}.message-actions .copy-btn{min-height:34px}.voice-control{font-size:10px;padding:0 7px}}
+
+/* Project Engineer activity state and readable tool errors */
+.engineer-output-actions{display:flex;gap:7px;align-items:center}
+.engineer-run-state{font-size:11px;font-weight:650;color:var(--muted);margin-left:auto;margin-right:12px}
+.engineer-run-state[data-state="working"]{color:var(--accent)}
+.engineer-run-state[data-state="error"]{color:#f08a8a}
+.engineer-run-state[data-state="done"]{color:var(--accent)}
+.engineer-run-state[data-state="stopped"]{color:#e6bd72}
+.engineer-tool.tool-failed{border-color:#b85c5c;background:color-mix(in srgb,#b85c5c 7%,var(--surface))}
+.engineer-tool.tool-failed summary{color:#f08a8a}
+@media(max-width:760px){.engineer-output-head{flex-wrap:wrap;gap:7px}.engineer-run-state{margin-left:0;margin-right:auto}.engineer-output-actions{margin-left:auto}}
+
+
+/* Project Engineer — consistent controls, alignment and responsive layout */
+#engineerModal,
+#engineerModal * { box-sizing: border-box; }
+#engineerModal .engineer-panel { position: relative; }
+#engineerModal .engineer-head {
+  align-items: flex-start;
+  min-width: 0;
+  padding: 22px 26px 18px;
+}
+#engineerModal .engineer-head > div { min-width: 0; flex: 1; }
+#engineerModal .engineer-head .eyebrow { margin: 0 0 7px; }
+#engineerModal .engineer-head h2 { line-height: 1.2; }
+#engineerModal .engineer-head p { font-size: 12px; line-height: 1.55; }
+#engineerModal .engineer-head .modal-close {
+  position: static;
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel2);
+  color: var(--text);
+  font-size: 22px;
+  line-height: 1;
+}
+#engineerModal .engineer-grid { min-width: 0; }
+#engineerModal .engineer-side,
+#engineerModal .engineer-main { min-width: 0; }
+#engineerModal .engineer-side { gap: 13px; }
+#engineerModal .engineer-side h3 { font-size: 13px; line-height: 1.3; }
+#engineerModal .engineer-side label:not(.engineer-upload) {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 7px;
+  margin: 2px 0;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+#engineerModal .engineer-side select,
+#engineerModal .engineer-main select,
+#engineerModal .engineer-main textarea {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--bg);
+  color: var(--text);
+  font: 12px/1.5 'DM Sans', sans-serif;
+  outline: none;
+}
+#engineerModal .engineer-side select { min-height: 38px; padding: 8px 10px; }
+#engineerModal .engineer-main textarea { min-height: 142px; padding: 13px 14px; line-height: 1.6; }
+#engineerModal .engineer-side select:focus,
+#engineerModal .engineer-main select:focus,
+#engineerModal .engineer-main textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb,var(--accent) 12%,transparent); }
+#engineerModal .engineer-upload {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 76px;
+  margin: 0;
+  padding: 14px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+#engineerModal .engineer-upload input[type=file] {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  color: var(--muted);
+  font: 10px/1.4 'DM Sans', sans-serif;
+}
+#engineerModal .engineer-upload input[type=file]::file-selector-button {
+  margin-right: 8px;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel2);
+  color: var(--text);
+  font: 10px 'DM Sans', sans-serif;
+  cursor: pointer;
+}
+#engineerModal .setting-help { margin: 0; font-size: 10px; line-height: 1.55; }
+#engineerModal .engineer-toolbar {
+  justify-content: flex-start;
+  gap: 10px 18px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel2);
+}
+#engineerModal #engineerModelLabel {
+  min-width: 0;
+  flex: 1 1 180px;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+#engineerModal .engineer-toolbar .setting-check {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+#engineerModal .engineer-toolbar .setting-check input {
+  flex: 0 0 15px;
+  width: 15px !important;
+  height: 15px;
+  margin: 0 !important;
+  accent-color: var(--accent);
+}
+#engineerModal #engineerCapability { margin: -4px 0 2px; }
+#engineerModal .engineer-main > label[for=engineerTask] {
+  display: block;
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+#engineerModal .engineer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 2px 0 5px;
+}
+#engineerModal .engineer-actions button,
+#engineerModal #engineerExport {
+  min-height: 36px;
+  padding: 8px 11px;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.25;
+}
+#engineerModal button:disabled { opacity: .42; cursor: not-allowed; }
+#engineerModal .engineer-output-head {
+  display: grid;
+  grid-template-columns: minmax(0,1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 1px 0;
+  color: var(--text);
+  font-size: 11px;
+}
+#engineerModal .engineer-run-state { margin: 0; white-space: nowrap; }
+#engineerModal .engineer-output-actions { display: flex; align-items: center; gap: 7px; }
+#engineerModal .engineer-output-actions .copy-btn,
+#engineerModal .engineer-log .inline-copy,
+#engineerModal .engineer-tool .code-copy {
+  min-height: 27px;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel2);
+  color: var(--text);
+  font: 10px 'DM Sans', sans-serif;
+}
+#engineerModal .engineer-output {
+  min-width: 0;
+  min-height: 220px;
+  padding: 14px;
+  line-height: 1.55;
+}
+#engineerModal .engineer-log {
+  min-height: 28px;
+  padding: 6px 42px 6px 9px;
+  border-bottom: 1px solid color-mix(in srgb,var(--line) 65%,transparent);
+  font-size: 11px;
+  line-height: 1.55;
+}
+#engineerModal .engineer-log:last-child { border-bottom: 0; }
+#engineerModal .engineer-log .inline-copy { top: 4px; right: 2px; }
+#engineerModal .engineer-token {
+  margin: 7px 0;
+  padding: 13px 13px 40px;
+  border-radius: 9px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.65;
+}
+#engineerModal .engineer-tool {
+  margin: 9px 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel);
+}
+#engineerModal .engineer-tool summary {
+  display: flex;
+  align-items: center;
+  min-height: 38px;
+  padding: 8px 11px;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+#engineerModal .engineer-tool pre {
+  margin: 0;
+  padding: 42px 12px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 10px;
+  line-height: 1.55;
+}
+#engineerModal .engineer-tool .code-copy { top: 7px; right: 7px; }
+#engineerModal .engineer-files { background: var(--bg); color: var(--muted); line-height: 1.65; }
+#engineerModal .engineer-files div { padding: 4px 5px; }
+#engineerModal .engineer-status { padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel2); font-size: 11px; line-height: 1.5; }
+@media (max-width: 760px) {
+  #engineerModal .engineer-head { padding: 14px 15px; }
+  #engineerModal .engineer-head h2 { font-size: 1.25rem; }
+  #engineerModal .engineer-head p { font-size: 10px; }
+  #engineerModal .engineer-grid { grid-template-columns: minmax(0,1fr); grid-template-rows: minmax(190px,34%) minmax(0,1fr); }
+  #engineerModal .engineer-side { padding: 12px 14px; gap: 9px; }
+  #engineerModal .engineer-main { padding: 12px 14px; gap: 10px; }
+  #engineerModal .engineer-toolbar { align-items: flex-start; gap: 9px 13px; }
+  #engineerModal #engineerModelLabel { flex-basis: 100%; }
+  #engineerModal .engineer-output-head { grid-template-columns: minmax(0,1fr) auto; }
+  #engineerModal .engineer-run-state { justify-self: end; }
+  #engineerModal .engineer-output-actions { grid-column: 1 / -1; justify-content: flex-end; }
+  #engineerModal .engineer-output { min-height: 150px; }
+}
+@media (max-width: 420px) {
+  #engineerModal .engineer-actions { gap: 6px; }
+  #engineerModal .engineer-actions button { flex: 1 1 auto; }
+  #engineerModal .engineer-toolbar .setting-check { white-space: normal; }
+}

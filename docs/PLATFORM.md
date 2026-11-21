@@ -1,6 +1,6 @@
-# Cross-platform behavior — 1.6.0
+# Cross-platform behavior
 
-CanarryLookup AI 1.6.0 targets Python 3.11+ on Windows, macOS and Linux. The application uses each OS user’s standard application-data location rather than storing live data in the source folder.
+CanarryLookup AI targets Python 3.11+ on Windows, macOS and Linux. The application uses each OS user’s standard application-data location rather than storing live data in the source folder.
 
 ## Persistent storage
 
@@ -42,39 +42,10 @@ Use either firewalld or UFW, not both. The provided Linux script detects the act
 
 ## Harness mode
 
-Normal mode disables built-in workspace and command tools. Harness mode enables the existing workspace file tools and allowlisted command runner for that browser/device only. It is not an OS sandbox or full desktop GUI automation system. Commands execute as the account running CanarryLookup. Run as an unprivileged user and only enable Harness mode on trusted devices.
+Normal mode disables built-in workspace and command tools. Harness mode enables the existing workspace file tools and Project Engineer for that browser/device only. Project Engineer can run installed build tools in an imported project as the CanarryLookup host account. It is not an OS sandbox or full desktop GUI automation system. Commands execute as the account running CanarryLookup. Run as an unprivileged user and only enable Harness mode on trusted devices.
 
 ## Provider and MCP portability
 
 Ollama, MCP stdio executables and tunnel CLIs must be installed on the host running CanarryLookup. Device-specific MCP stdio processes execute on that host under its OS account, but their configurations and tool availability are isolated by device identity. A remote device that needs access to a service running on itself must expose a Streamable HTTP MCP endpoint reachable from the host; browser code cannot launch a local stdio process on the remote device. Cloud API keys and settings are device-scoped. Tailscale requires the host CLI to be signed in; ngrok and Cloudflare credentials can be stored from the owner device Settings.
 
 The release is syntax-checked and tested with isolated API fixtures. Windows/macOS firewall behavior, provider accounts, actual external tunnels and real MCP services must still be validated on the target OS and with the user's credentials.
-
-## Starting the server for LAN access
-
-Linux and macOS:
-
-```bash
-python app.py --host 0.0.0.0 --port 8080
-```
-
-Windows PowerShell:
-
-```powershell
-python app.py --host 0.0.0.0 --port 8080
-```
-
-`127.0.0.1` is loopback-only. `0.0.0.0` listens on network interfaces.
-This does not automatically configure the firewall.
-
-Find your host address:
-
-- Linux: `hostname -I`
-- macOS: `ipconfig getifaddr en0` (Wi-Fi; interface may differ)
-- Windows: `ipconfig`
-
-Visit `http://HOST-LAN-IP:8080` from another device.
-Both devices must be on a network that permits local communication.
-
-Use a firewall rule restricted to your trusted LAN subnet.
-Public internet access requires authenticated remote access.

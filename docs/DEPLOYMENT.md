@@ -1,4 +1,4 @@
-# Deployment and network sharing — 1.6.0
+# Deployment and network sharing
 
 CanarryLookup is a personal multi-device workspace. Run one host and pair other browsers/devices to it.
 
@@ -29,32 +29,8 @@ The app never exposes Ollama's port 11434. Do not configure router port forwardi
 
 ## Normal and Harness modes
 
-Normal mode disables built-in workspace and command tools. Harness mode enables the existing workspace tools and allowlisted command runner for that device only. It is not a sandbox and does not provide full GUI automation. MCP integrations remain independently available in both modes and can have their own permissions.
+Normal mode disables built-in workspace and command tools. Harness mode enables the existing workspace tools and Project Engineer for that device only. Project Engineer can edit imported project files and invoke installed project commands as the CanarryLookup host account. It is not a sandbox and does not provide full GUI automation. MCP integrations remain independently available in both modes and can have their own permissions.
 
 ## Backups
 
 Stop the server and back up the complete data directory, including `studio.sqlite3`, uploads, generated images, workspace and `.canarry-device-secrets.key`. The key is required to decrypt saved per-device provider and tunnel credentials.
-
-## LAN binding and remote devices
-
-For access from other devices on your local network, launch:
-
-```bash
-python app.py --host 0.0.0.0 --port 8080
-```
-
-The loopback address `127.0.0.1` is accessible only from the same
-computer. Binding to `0.0.0.0` makes the service listen on network
-interfaces, subject to firewall and router restrictions.
-
-Find your LAN address on Linux:
-
-```bash
-hostname -I
-```
-
-Open `http://LAN-IP:8080` from another device on the same trusted network.
-
-Allow inbound TCP port 8080 only from your trusted LAN subnet.
-Do not disable your firewall or expose the application directly to
-the public internet. Use authenticated remote access for worldwide access.

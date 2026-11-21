@@ -1,10 +1,11 @@
 from __future__ import annotations
-import base64, json, os, re, shlex, sqlite3, subprocess, time, uuid, hashlib, mimetypes, hmac, ipaddress, asyncio, secrets, urllib.parse, shutil, sys, socket, threading, zipfile, io, contextvars
+import base64, json, os, re, shlex, sqlite3, subprocess, time, uuid, hashlib, mimetypes, hmac, ipaddress, asyncio, secrets, urllib.parse, shutil, sys, socket, threading, zipfile, io, contextvars, tarfile, gzip, tempfile
 from pathlib import Path
 from typing import Any
 import httpx
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.responses import FileResponse, StreamingResponse, PlainTextResponse, JSONResponse
+from starlette.background import BackgroundTask
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from cryptography.fernet import Fernet, InvalidToken
@@ -97,14 +98,15 @@ def _decrypt_device_value(value:str)->str:
     try:return _SECRET_CIPHER.decrypt(value[7:].encode("ascii")).decode("utf-8")
     except InvalidToken:raise RuntimeError("Device settings could not be decrypted. Preserve the CanarryLookup encryption key and data directory together.")
 MAX_UPLOAD = 50 * 1024 * 1024
+MAX_PROJECT_ARCHIVE = int(os.environ.get('CANARRY_MAX_PROJECT_ARCHIVE', str(2 * 1024 * 1024 * 1024)))
 MAX_FILES_PER_TURN = 20
 MAX_EXTRACT_CHARS = 120000
-MAX_ATTACHMENT_CONTEXT_CHARS = 8000
+MAX_ATTACHMENT_CONTEXT_CHARS = 32000
 MAX_CHAT_MESSAGES = 8
-MAX_TOOL_ROUNDS = int(os.environ.get("MAX_TOOL_ROUNDS", "6"))
+MAX_TOOL_ROUNDS = int(os.environ.get("MAX_TOOL_ROUNDS", "16"))
 COMMAND_TIMEOUT = int(os.environ.get("COMMAND_TIMEOUT", "45"))
 
-app = FastAPI(title="CanarryLookup AI", version="1.6.0")
+app = FastAPI(title="CanarryLookup AI", version="", docs_url=None, redoc_url=None, openapi_url=None)
 CURRENT_DEVICE: contextvars.ContextVar[str] = contextvars.ContextVar("canarry_device_id", default="local-default")
 CURRENT_DEVICE_OWNER: contextvars.ContextVar[bool] = contextvars.ContextVar("canarry_device_owner", default=False)
 DEVICE_COOKIE = "canarry_device"
@@ -672,7 +674,7 @@ async def models():
         return {"models":[{"name":m.get("id",m.get("name","")).removeprefix("models/")} for m in rows],"provider":p["type"]}
     except Exception as e:raise HTTPException(502,f"Provider connection failed ({p['type']} at {p['base_url']}): {e}")
 
-@app.get("/api/model-capabilities/{model}")
+@app.get("/api/model-capabilities/{model:path}")
 async def model_capabilities(model:str):
     p=provider_config()
     if p["type"]!="ollama":return {"known":False,"capabilities":[],"note":"Capabilities are provider/model dependent."}
@@ -680,7 +682,9 @@ async def model_capabilities(model:str):
         async with httpx.AsyncClient(timeout=15,headers=auth_headers(p)) as client:
             r=await client.post(f"{p['base_url']}/api/show",json={"model":model});r.raise_for_status();data=r.json()
         caps=data.get("capabilities") or []
-        return {"known":bool(caps),"capabilities":caps,"vision":("vision" in caps),"tools":("tools" in caps)}
+        model_info=data.get("model_info") or {}
+        thinking=("thinking" in caps) or any("thinking" in str(k).lower() for k in model_info)
+        return {"known":bool(caps or model_info),"capabilities":caps,"vision":("vision" in caps),"tools":("tools" in caps),"thinking":thinking}
     except Exception as e:return {"known":False,"capabilities":[],"note":str(e)[:180]}
 
 @app.post("/api/chats")
@@ -927,9 +931,61 @@ async def upload_file(file:UploadFile=File(...),chat_id:str|None=Form(None)):
     name=Path(file.filename or "attachment").name;data=await file.read(MAX_UPLOAD+1)
     if len(data)>MAX_UPLOAD:raise HTTPException(413,"Maximum file size is 50 MB per file.")
     uid=uuid.uuid4().hex;safe_name=re.sub(r"[^A-Za-z0-9._-]","_",name)[:120] or "attachment";path=UPLOAD_DIR/f"{uid}_{safe_name}";path.write_bytes(data)
-    extracted=extract_upload_text(path,name);mime=file.content_type or mimetypes.guess_type(name)[0] or "application/octet-stream"
+    extracted=extract_upload_text(path,name)
+    archive_ext = name.lower().endswith((".zip",".7z",".rar",".tar",".gz",".tgz",".tar.gz",".tar.xz",".tar.bz2"))
+    archive_file_count = 0
+    if archive_ext:
+        try:
+            archive_root = device_workspace() / "attachments" / uid
+            source_root = archive_root / "source"
+            # Reject archive bombs before extraction where the format exposes member sizes.
+            lower_name = name.lower()
+            if lower_name.endswith(".zip"):
+                with zipfile.ZipFile(path) as zf:
+                    infos = [i for i in zf.infolist() if not i.is_dir()]
+                    total_unpacked = sum(i.file_size for i in infos)
+                    if len(infos) > 20000 or total_unpacked > 512 * 1024 * 1024:
+                        raise ValueError("Archive expands beyond the 20,000-file / 512 MB safety limit.")
+            archive_result = _extract_project_archive(path, source_root, name)
+            archive_file_count = int(archive_result.get("files", 0))
+            entries = []
+            snippets = []
+            text_ext = {".txt",".md",".py",".js",".ts",".tsx",".jsx",".json",".csv",".html",".css",".xml",".yaml",".yml",".toml",".rs",".go",".java",".c",".cpp",".h",".sh",".sql",".log",".ini",".conf",".lock"}
+            used = 0
+            for item in sorted(source_root.rglob("*"), key=lambda x: str(x).lower()):
+                if item.is_symlink(): continue
+                rel = item.relative_to(source_root).as_posix()
+                if item.is_dir():
+                    entries.append(rel + "/")
+                    continue
+                entries.append(f"{rel} ({item.stat().st_size} bytes)")
+                if item.suffix.lower() in text_ext and used < 26000:
+                    try:
+                        content = item.read_text("utf-8", errors="replace")
+                        content = content[:max(0, min(5000, 26000-used))]
+                        if content.strip():
+                            block = f"\n--- {rel} ---\n{content}\n"
+                            snippets.append(block); used += len(block)
+                    except OSError:
+                        pass
+            extracted = (
+                f"[ARCHIVE EXTRACTED SUCCESSFULLY]\n"
+                f"Archive: {name}\n"
+                f"Extracted workspace path: attachments/{uid}/source\n"
+                f"Files extracted: {sum(1 for x in source_root.rglob('*') if x.is_file())}\n"
+                "File tree (directories end with /):\n" + "\n".join(entries[:4000]) +
+                "\n\nText-file previews (use workspace tools to read complete files):\n" + "".join(snippets)
+            )[:MAX_EXTRACT_CHARS]
+        except Exception as e:
+            extracted = f"[ARCHIVE EXTRACTION FAILED: {type(e).__name__}: {e}] The original archive remains attached at {path}."
+    mime=file.content_type or mimetypes.guess_type(name)[0] or "application/octet-stream"
     with db() as c:c.execute("INSERT INTO uploads(id,chat_id,name,path,mime,size,extracted,created,device_id) VALUES(?,?,?,?,?,?,?,?,?)",(uid,chat_id,name,str(path),mime,len(data),extracted,time.time(),CURRENT_DEVICE.get()))
-    return {"id":uid,"name":name,"size":len(data),"mime":mime,"extracted_chars":len(extracted),"is_image":mime.startswith("image/")}
+    archive_status = None
+    if archive_ext:
+        archive_ok = extracted.startswith("[ARCHIVE EXTRACTED SUCCESSFULLY]")
+        archive_status = {"extracted": archive_ok, "files": archive_file_count,
+                          "error": None if archive_ok else extracted[:1800]}
+    return {"id":uid,"name":name,"size":len(data),"mime":mime,"extracted_chars":len(extracted),"is_image":mime.startswith("image/"),"archive":archive_status}
 @app.get("/api/generated/{image_id}")
 async def generated_image(image_id:str):
     if not re.fullmatch(r"[a-f0-9]{32}",image_id): raise HTTPException(404,"Image not found")
@@ -977,6 +1033,488 @@ def openai_messages(history, image_ids_by_message):
         result.append(item)
     return result
 
+
+# Project Engineer: isolated source trees, archive handling and model-driven tools.
+PROJECT_ARCHIVE_EXTENSIONS = {".zip", ".7z", ".rar", ".tar", ".gz", ".tgz", ".tar.gz", ".tar.xz", ".tar.bz2"}
+def _project_root() -> Path:
+    base = device_workspace() / "engine-projects"
+    base.mkdir(parents=True, exist_ok=True)
+    return base.resolve()
+
+def _safe_project_name(name: str) -> str:
+    stem = Path(name).name
+    stem = re.sub(r"[^A-Za-z0-9._ -]+", "-", stem).strip(" .-_")
+    return (stem[:70] or "project")
+
+def _safe_archive_target(root: Path, member: str) -> Path:
+    raw = Path(member.replace("\\", "/"))
+    if raw.is_absolute() or any(part in {"..", ""} for part in raw.parts):
+        raise ValueError(f"Unsafe archive path: {member}")
+    target = (root / raw).resolve()
+    if target != root and root not in target.parents:
+        raise ValueError(f"Archive path escapes project: {member}")
+    return target
+
+def _extract_project_archive(archive: Path, destination: Path, filename: str) -> dict:
+    lower = filename.lower()
+    destination.mkdir(parents=True, exist_ok=True)
+    count = 0
+    if lower.endswith(".zip"):
+        with zipfile.ZipFile(archive) as z:
+            for info in z.infolist():
+                if info.is_dir(): continue
+                mode = (info.external_attr >> 16) & 0o170000
+                if mode == 0o120000: raise ValueError("Symbolic links in archives are not extracted.")
+                target = _safe_archive_target(destination, info.filename)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with z.open(info) as source, target.open("wb") as out: shutil.copyfileobj(source, out)
+                count += 1
+    elif lower.endswith(".7z"):
+        try: import py7zr
+        except ImportError: raise ValueError("7z support needs py7zr. Install it with: pip install py7zr")
+        with py7zr.SevenZipFile(archive, mode="r") as z:
+            for item in z.list():
+                if item.is_directory: continue
+                link_check=getattr(item,"is_symlink",False)
+                if link_check() if callable(link_check) else link_check:
+                    raise ValueError("Symbolic links in 7Z archives are not extracted.")
+                _safe_archive_target(destination, item.filename)
+            z.extractall(path=destination)
+            count = sum(1 for x in destination.rglob("*") if x.is_file())
+    elif lower.endswith(".rar"):
+        try: import rarfile
+        except ImportError: raise ValueError("RAR support needs rarfile and an extraction backend (unrar, unar or bsdtar).")
+        with rarfile.RarFile(archive) as r:
+            for item in r.infolist():
+                if item.isdir(): continue
+                _safe_archive_target(destination, item.filename)
+                if item.is_symlink(): raise ValueError("Symbolic links in RAR archives are not extracted.")
+            r.extractall(destination)
+            count = sum(1 for x in destination.rglob("*") if x.is_file())
+    elif lower.endswith((".tar", ".tar.gz", ".tgz", ".tar.xz", ".tar.bz2")):
+        with tarfile.open(archive, "r:*") as t:
+            for item in t.getmembers():
+                if item.isdir(): continue
+                if not item.isfile(): raise ValueError("Links and special files in TAR archives are not extracted.")
+                _safe_archive_target(destination, item.name)
+            for item in t.getmembers():
+                if not item.isfile(): continue
+                target = _safe_archive_target(destination, item.name)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                source = t.extractfile(item)
+                if source is None: continue
+                with source, target.open("wb") as out: shutil.copyfileobj(source, out)
+                count += 1
+    elif lower.endswith(".gz"):
+        # A standalone .gz is decompressed into a file without the .gz suffix.
+        target_name = Path(filename).name[:-3] or "decompressed"
+        target = _safe_archive_target(destination, target_name)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with gzip.open(archive, "rb") as inp, target.open("wb") as out: shutil.copyfileobj(inp, out)
+        count = 1
+    else:
+        raise ValueError("Supported project archives: ZIP, 7Z, RAR, TAR, TAR.GZ, TGZ, TAR.XZ, TAR.BZ2 and GZ.")
+    return {"files": count, "path": str(destination)}
+
+def _project_path(project_id: str) -> Path:
+    if not re.fullmatch(r"[a-f0-9]{32}", project_id or ""):
+        raise HTTPException(400, "Invalid project identifier.")
+    root = (_project_root() / project_id).resolve()
+    if _project_root() not in root.parents or not root.is_dir():
+        raise HTTPException(404, "Project workspace not found on this device.")
+    return root
+
+def _project_file(project: Path, relative: str) -> Path:
+    target = (project / relative).resolve()
+    if target != project and project not in target.parents:
+        raise HTTPException(400, "Path escapes the imported project.")
+    return target
+
+@app.post("/api/engine/import")
+async def engine_import(file: UploadFile = File(...)):
+    if not device_harness_enabled():
+        raise HTTPException(403, "Enable Harness mode on this device before importing and modifying project source archives.")
+    filename = Path(file.filename or "project.zip").name
+    lower = filename.lower()
+    if not any(lower.endswith(ext) for ext in PROJECT_ARCHIVE_EXTENSIONS):
+        raise HTTPException(415, "Unsupported archive format. Supported: ZIP, 7Z, RAR, TAR, GZ and compressed TAR.")
+    pid = uuid.uuid4().hex
+    project = _project_root() / pid
+    project.mkdir(parents=True, exist_ok=False)
+    archive = project.parent / (pid + Path(filename).suffix.lower())
+    size = 0
+    try:
+        with archive.open("wb") as out:
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+                if size > MAX_PROJECT_ARCHIVE: raise HTTPException(413, f"Archive exceeds configured {MAX_PROJECT_ARCHIVE // (1024*1024)} MB import limit.")
+                out.write(chunk)
+        extracted = project / "source"
+        result = _extract_project_archive(archive, extracted, filename)
+        (project/"project.json").write_text(json.dumps({"name":_safe_project_name(filename),"original_filename":filename,"created":time.time()},ensure_ascii=False),encoding="utf-8")
+        archive.unlink(missing_ok=True)
+        files = [str(x.relative_to(extracted)) for x in extracted.rglob("*") if x.is_file()]
+        return {"id":pid,"name":_safe_project_name(filename),"files":result["files"],"root":"source","file_list":files[:5000],"workspace":str(project)}
+    except Exception:
+        shutil.rmtree(project, ignore_errors=True)
+        archive.unlink(missing_ok=True)
+        raise
+
+@app.get("/api/engine/projects")
+async def engine_projects():
+    result=[]
+    for folder in sorted(_project_root().iterdir(), key=lambda p:p.stat().st_mtime, reverse=True):
+        if folder.is_dir() and re.fullmatch(r"[a-f0-9]{32}",folder.name):
+            source=folder/"source"
+            try: meta=json.loads((folder/"project.json").read_text(encoding="utf-8"))
+            except Exception: meta={}
+            result.append({"id":folder.name,"name":meta.get("name",folder.name),"files":sum(1 for x in source.rglob("*") if x.is_file()) if source.exists() else 0})
+    return result
+
+@app.get("/api/engine/project/{project_id}/files")
+async def engine_project_files(project_id:str, path:str=".", recursive:bool=False):
+    project=_project_path(project_id)/"source"; target=_project_file(project,path)
+    if not target.exists(): raise HTTPException(404,"Path not found.")
+    if target.is_file(): return {"path":path,"files":[{"path":path,"size":target.stat().st_size}]}
+    items=target.rglob("*") if recursive else target.iterdir()
+    return {"path":path,"files":[{"path":str(x.relative_to(project)),"directory":x.is_dir(),"size":x.stat().st_size if x.is_file() else 0} for x in sorted(items,key=lambda x:(not x.is_dir(),str(x).lower()))]}
+
+@app.get("/api/engine/project/{project_id}/read")
+async def engine_project_read(project_id:str, path:str):
+    project=_project_path(project_id)/"source"; target=_project_file(project,path)
+    if not target.is_file(): raise HTTPException(404,"File not found.")
+    if target.stat().st_size > 8*1024*1024: raise HTTPException(413,"File exceeds 8 MB read limit; inspect it in smaller sections.")
+    try: return {"path":path,"content":target.read_text(encoding="utf-8")}
+    except UnicodeDecodeError: raise HTTPException(415,"File is not UTF-8 text.")
+
+@app.put("/api/engine/project/{project_id}/write")
+async def engine_project_write(project_id:str, payload:dict):
+    project=_project_path(project_id)/"source"
+    if not device_harness_enabled(): raise HTTPException(403,"Harness mode is disabled.")
+    path=str(payload.get("path","")); content=payload.get("content")
+    if not path or not isinstance(content,str): raise HTTPException(400,"Provide path and text content.")
+    target=_project_file(project,path); target.parent.mkdir(parents=True,exist_ok=True)
+    target.write_text(content,encoding="utf-8")
+    return {"ok":True,"path":path,"bytes":target.stat().st_size}
+
+@app.post("/api/engine/project/{project_id}/command")
+async def engine_project_command(project_id:str, payload:dict):
+    if not device_harness_enabled(): raise HTTPException(403,"Harness mode is disabled.")
+    project=_project_path(project_id)/"source"
+    command=payload.get("command")
+    if isinstance(command,str): argv=shlex.split(command)
+    elif isinstance(command,list): argv=[str(x) for x in command]
+    else: raise HTTPException(400,"Provide a command string or argument array.")
+    if not argv: raise HTTPException(400,"Empty command.")
+    cwd=_project_file(project,str(payload.get("cwd",".")))
+    if not cwd.is_dir(): raise HTTPException(400,"Working directory does not exist.")
+    timeout=max(1,min(int(payload.get("timeout",900)),3600))
+    try:
+        proc=await asyncio.create_subprocess_exec(*argv,cwd=str(cwd),stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.STDOUT)
+        output,_=await asyncio.wait_for(proc.communicate(),timeout=timeout)
+        return {"returncode":proc.returncode,"output":output.decode("utf-8",errors="replace")[-120000:],"cwd":str(cwd),"command":argv}
+    except asyncio.TimeoutError:
+        proc.kill(); await proc.wait()
+        return {"returncode":124,"output":f"Command timed out after {timeout} seconds.","command":argv}
+
+@app.post("/api/engine/search")
+async def engine_web_search(payload:dict):
+    query=str(payload.get("query","")).strip()
+    if not query: raise HTTPException(400,"Enter a search query.")
+    try:
+        from ddgs import DDGS
+        results=await asyncio.to_thread(lambda: list(DDGS().text(query,max_results=max(1,min(int(payload.get("limit",8)),12)))))
+        return {"results":[{"title":x.get("title",""),"url":x.get("href",""),"snippet":x.get("body","")} for x in results]}
+    except ImportError: raise HTTPException(503,"Web search dependency is missing. Install requirements.txt (ddgs).")
+    except Exception as e: raise HTTPException(502,f"Web search failed: {e}")
+
+def _parse_engine_tool_request(content: str, allowed_names=None):
+    """Accept native-style JSON tool requests emitted as plain text by small models."""
+    if not content:
+        return None
+    candidates = []
+    for match in re.finditer(r"<canarry_tool>\s*(.*?)\s*</canarry_tool>", content, re.S | re.I):
+        candidates.append(match.group(1).strip())
+    for match in re.finditer(r"```(?:json)?\s*([\s\S]*?)\s*```", content, re.I):
+        candidates.append(match.group(1).strip())
+    candidates.append(content.strip())
+    # Find balanced JSON objects, so nested arguments/content objects are preserved.
+    decoder = json.JSONDecoder()
+    for pos, char in enumerate(content):
+        if char == "{":
+            try:
+                obj, consumed = decoder.raw_decode(content[pos:])
+                if isinstance(obj, dict) and consumed > 0:
+                    candidates.append(content[pos:pos + consumed])
+            except Exception:
+                pass
+    aliases = {
+        "list_files":"project_list_files", "read_file":"project_read_file",
+        "write_file":"project_write_file", "run_command":"project_run_command",
+        "search_web":"web_search", "search":"web_search",
+        "project_list_files":"project_list_files", "project_read_file":"project_read_file",
+        "project_write_file":"project_write_file", "project_run_command":"project_run_command",
+        "web_search":"web_search"
+    }
+    allowed = set(allowed_names or [])
+    seen = set()
+    for raw in candidates:
+        if raw in seen: continue
+        seen.add(raw)
+        try: obj = json.loads(raw)
+        except Exception: continue
+        if not isinstance(obj, dict): continue
+        fn = obj.get("function") if isinstance(obj.get("function"), dict) else obj
+        name = fn.get("name")
+        args = fn.get("arguments", obj.get("arguments", {}))
+        if isinstance(args, str):
+            try: args = json.loads(args)
+            except Exception: args = {}
+        if isinstance(name, str) and (name in aliases or name in allowed) and isinstance(args, dict):
+            return {"id":uuid.uuid4().hex,"type":"function","function":{"name":aliases.get(name,name),"arguments":json.dumps(args,ensure_ascii=False)}}
+    return None
+
+@app.post("/api/engine/project/{project_id}/agent")
+async def engine_project_agent(project_id:str, payload:dict):
+    if not device_harness_enabled(): raise HTTPException(403,"Enable Harness mode on this device to let the agent inspect and modify project files and run project commands.")
+    project_container=_project_path(project_id)
+    project=project_container/"source"
+    try: project_meta=json.loads((project_container/"project.json").read_text(encoding="utf-8"))
+    except Exception: project_meta={}
+    original_archive=str(project_meta.get("original_filename") or project_meta.get("name") or "the imported archive")
+    initial_tree=[]
+    ignored_tree_dirs={".git","node_modules","target","dist","build",".venv","venv","__pycache__",".pytest_cache",".mypy_cache"}
+    total_tree_entries=0
+    if project.exists():
+        for item in sorted(project.rglob("*"),key=lambda x:str(x.relative_to(project)).lower()):
+            rel=item.relative_to(project)
+            if any(part in ignored_tree_dirs for part in rel.parts):
+                continue
+            total_tree_entries += 1
+            if len(initial_tree) < 1200:
+                initial_tree.append(str(rel) + ("/" if item.is_dir() else f" ({item.stat().st_size} bytes)"))
+    p=provider_config(); model=str(payload.get("model") or "")
+    task=str(payload.get("task") or "").strip()
+    if not model or not task: raise HTTPException(400,"Select a model and enter a development task.")
+    think=bool(payload.get("think",False))
+    tools=[
+      {"type":"function","function":{"name":"project_list_files","description":"List files and directories inside the imported project. By default list recursively so you can see the complete source tree; use a narrower path when needed.","parameters":{"type":"object","properties":{"path":{"type":"string","description":"Relative directory path; default ."},"recursive":{"type":"boolean","description":"List nested files recursively; defaults true."},"limit":{"type":"integer","description":"Maximum entries to return; defaults 1500."}}}}},
+      {"type":"function","function":{"name":"project_read_file","description":"Read a UTF-8 text file from the imported project.","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}},
+      {"type":"function","function":{"name":"project_write_file","description":"Create or replace a UTF-8 text file in the imported project. Use for complete implementation, not just suggestions.","parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}}},
+      {"type":"function","function":{"name":"project_run_command","description":"Run a command in the imported project directory (for example npm test, cargo check, python -m pytest). Commands execute as the CanarryLookup host user.","parameters":{"type":"object","properties":{"command":{"type":"string"},"cwd":{"type":"string"},"timeout":{"type":"integer"}},"required":["command"]}}},
+      {"type":"function","function":{"name":"web_search","description":"Search the public web for current documentation, issues, APIs and technical references. Return titles, URLs and snippets.","parameters":{"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer"}},"required":["query"]}}}
+    ]
+    if not bool(payload.get("web_search", True)):
+        tools=[t for t in tools if t["function"]["name"]!="web_search"]
+    system=("You are an autonomous software engineering agent working on the user's imported project. "
+      "Inspect the actual repository before changing it. Understand architecture and follow existing conventions. "
+      "Implement the requested work as completely as your capabilities allow; do not artificially restrict yourself to tiny changes. "
+      "Use project tools to read and edit actual files, run builds/tests, diagnose failures, and iterate. "
+      "Use web_search when current external documentation or technical facts are useful. "
+      "Use project-relative paths. The uploaded archive has ALREADY been extracted; do not pass the archive filename as a directory. "
+      f"Original uploaded archive: {original_archive}. The actual project root is the extracted source directory; start with project_list_files(path='.') and use paths relative to that root. "
+      f"Extracted repository tree ({min(total_tree_entries, len(initial_tree))} shown of {total_tree_entries} entries): {json.dumps(initial_tree, ensure_ascii=False)}. "
+      "The only valid tool names are project_list_files, project_read_file, project_write_file, project_run_command and web_search. "
+      "For Ollama models, use the text tool protocol: do NOT use native function/tool calls. When a tool is needed, output one complete compact JSON object only, with no markdown fence or explanation, in this exact shape: {\"name\":\"project_list_files\",\"arguments\":{\"path\":\".\",\"recursive\":true}}. Wait for the tool result before deciding the next action. Never truncate JSON. "
+      "Preserve unrelated user work and data. Never claim a command, edit, or test succeeded unless tool output confirms it. "
+      "Do not create changelogs, build notes, version context, or release notes unless the user explicitly asks. "
+      "Do not stop after planning: carry out the implementation. If a task is too large for one context, prioritize coherent end-to-end implementation and report exactly what remains.")
+    if think: system += "\nReason carefully through the repository and task before acting; use a deliberate inspect-plan-implement-test-review loop."
+    async def events():
+        nonlocal think
+        history=[{"role":"system","content":system},{"role":"user","content":task}]
+        try:
+            # Ollama may spend many minutes evaluating a large prompt on low-end CPUs.
+            # None disables HTTPX read/write/pool deadlines for local model requests;
+            # connect still has a finite deadline so a missing server fails promptly.
+            provider_timeout = (httpx.Timeout(None, connect=20) if p["type"] == "ollama"
+                                else httpx.Timeout(3600, connect=20))
+            async with httpx.AsyncClient(timeout=provider_timeout) as client:
+                while True:
+                    if p["type"]=="ollama":
+                        # Small local coder models frequently emit malformed native tool-call
+                        # argument JSON. Use the explicit text protocol above and parse a complete
+                        # JSON object ourselves; this avoids Ollama's internal tool-argument parser.
+                        body={"model":model,"messages":history,"stream":True,"options":{"temperature":0.1,"num_predict":8192}}
+                        if think: body["think"]=True
+                        async with client.stream("POST",f"{p['base_url']}/api/chat",json=body,headers=auth_headers(p)) as r:
+                            if r.status_code>=400:
+                                raw=(await r.aread()).decode(errors="replace")
+                                if think and "think" in raw.lower():
+                                    think=False; yield f"data: {json.dumps({'type':'notice','message':'Model/provider rejected thinking mode; continuing without it.'})}\n\n"; continue
+                                yield f"data: {json.dumps({'type':'error','message':raw})}\n\n"; return
+                            final={}; content=""
+                            async for line in r.aiter_lines():
+                                if not line: continue
+                                try: chunk=json.loads(line)
+                                except Exception: continue
+                                if chunk.get("error"):
+                                    yield f"data: {json.dumps({'type':'error','message':str(chunk.get('error'))})}\n\n"
+                                    return
+                                msg=chunk.get("message",{})
+                                if msg.get("content"):
+                                    content+=msg["content"]; yield f"data: {json.dumps({'type':'token','text':msg['content']})}\n\n"
+                                if msg.get("tool_calls"): final.setdefault("tool_calls",[]).extend(msg["tool_calls"])
+                                if chunk.get("done"): break
+                        calls=final.get("tool_calls",[])
+                    elif p["type"]=="openai-compatible":
+                        body={"model":model,"messages":history,"stream":True,"tools":tools,"tool_choice":"auto","temperature":0.15,"max_tokens":8192}
+                        async with client.stream("POST",f"{p['base_url']}/chat/completions",json=body,headers=auth_headers(p)) as r:
+                            if r.status_code>=400:
+                                yield f"data: {json.dumps({'type':'error','message':(await r.aread()).decode(errors='replace')})}\n\n"; return
+                            acc={}; content=""
+                            async for line in r.aiter_lines():
+                                if not line or not line.startswith("data:"): continue
+                                raw=line[5:].strip()
+                                if raw=="[DONE]": break
+                                try: chunk=json.loads(raw)
+                                except Exception: continue
+                                for choice in chunk.get("choices",[]):
+                                    delta=choice.get("delta",{})
+                                    if delta.get("content"):
+                                        content+=delta["content"]; yield f"data: {json.dumps({'type':'token','text':delta['content']})}\n\n"
+                                    for tc in delta.get("tool_calls",[]):
+                                        entry=acc.setdefault(tc.get("index",0),{"id":"","type":"function","function":{"name":"","arguments":""}})
+                                        if tc.get("id"):entry["id"]=tc["id"]
+                                        entry["function"]["name"]+=tc.get("function",{}).get("name","")
+                                        entry["function"]["arguments"]+=tc.get("function",{}).get("arguments","")
+                            calls=list(acc.values())
+                    else:
+                        yield f"data: {json.dumps({'type':'error','message':'Project Engineer currently supports Ollama and OpenAI-compatible providers for tool-driven coding.'})}\n\n"; return
+                    text_protocol_call=False
+                    if not calls and content:
+                        fallback=_parse_engine_tool_request(content)
+                        if fallback:
+                            calls=[fallback]
+                            text_protocol_call=True
+                            yield f"data: {json.dumps({'type':'clear_response'})}\n\n"
+                        elif (content.lstrip().startswith(("{", "```json", "<canarry_tool>")) or re.match(r'(?is)^\s*\{\s*["\']name["\']\s*:',content)):
+                            yield f"data: {json.dumps({'type':'notice','message':'The model produced incomplete tool JSON. Asking it to retry with a complete JSON object.'})}\n\n"
+                            history.append({"role":"assistant","content":content})
+                            history.append({"role":"user","content":"Your previous tool request was incomplete or invalid JSON and was not executed. Re-emit exactly one complete compact JSON object with both name and arguments. Close every brace and quote. Do not use markdown."})
+                            continue
+                    if not calls:
+                        yield f"data: {json.dumps({'type':'done'})}\n\n"; return
+                    if text_protocol_call:
+                        history.append({"role":"assistant","content":content})
+                    else:
+                        history.append({"role":"assistant","content":content or None,"tool_calls":calls})
+                    for call in calls:
+                        fn=call.get("function",{}); name=fn.get("name","")
+                        name={"list_files":"project_list_files","read_file":"project_read_file","write_file":"project_write_file","run_command":"project_run_command","search_web":"web_search","search":"web_search"}.get(name,name)
+                        try: args=json.loads(fn.get("arguments") or "{}")
+                        except Exception: args={}
+                        try:
+                            if name=="project_list_files":
+                                requested_path=str(args.get("path",".")).strip()
+                                # Older/smaller models sometimes mistake the uploaded ZIP name for a directory.
+                                if requested_path in {original_archive, Path(original_archive).name, str(Path(original_archive).stem)}:
+                                    requested_path="."
+                                target=_project_file(project,requested_path)
+                                if not target.exists():
+                                    result={"error":f"Directory not found: {requested_path}. Use path='.' to list the extracted project root."}
+                                elif not target.is_dir():
+                                    result={"error":f"Not a directory: {requested_path}"}
+                                else:
+                                    recursive=bool(args.get("recursive",True))
+                                    limit=max(50,min(int(args.get("limit",1500)),3000))
+                                    candidates=target.rglob("*") if recursive else target.iterdir()
+                                    ignored={".git","node_modules","target","dist","build",".venv","venv","__pycache__",".pytest_cache",".mypy_cache"}
+                                    entries=[]; total=0
+                                    for x in sorted(candidates,key=lambda q:str(q.relative_to(project)).lower()):
+                                        rel=x.relative_to(project)
+                                        if any(part in ignored for part in rel.parts): continue
+                                        if x.is_symlink(): continue
+                                        total+=1
+                                        if len(entries)<limit:
+                                            entries.append({"path":str(rel),"directory":x.is_dir(),"size":x.stat().st_size if x.is_file() else 0})
+                                    result={"root":requested_path,"recursive":recursive,"entries":entries,"total_entries":total,"truncated":total>len(entries),"note":"Paths are relative to the extracted project root."}
+                            elif name=="project_read_file":
+                                target=_project_file(project,str(args.get("path","")))
+                                if not target.is_file(): result={"error":"File not found"}
+                                elif target.stat().st_size>8*1024*1024: result={"error":"File exceeds 8 MB; read a smaller file"}
+                                else:
+                                    try: result={"path":args["path"],"content":target.read_text(encoding="utf-8")}
+                                    except UnicodeDecodeError: result={"error":"Binary/non-UTF8 file"}
+                            elif name=="project_write_file":
+                                target=_project_file(project,str(args.get("path","")))
+                                if not args.get("path") or not isinstance(args.get("content"),str): result={"error":"path and string content required"}
+                                else:
+                                    target.parent.mkdir(parents=True,exist_ok=True); target.write_text(args["content"],encoding="utf-8")
+                                    result={"ok":True,"path":args["path"],"bytes":target.stat().st_size}
+                            elif name=="project_run_command":
+                                argv=shlex.split(str(args.get("command","")))
+                                cwd=_project_file(project,str(args.get("cwd",".")))
+                                if not argv or not cwd.is_dir(): result={"error":"Invalid command or working directory"}
+                                else:
+                                    timeout=max(1,min(int(args.get("timeout",900)),3600))
+                                    proc=await asyncio.create_subprocess_exec(*argv,cwd=str(cwd),stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.STDOUT)
+                                    try: out,_=await asyncio.wait_for(proc.communicate(),timeout=timeout); result={"returncode":proc.returncode,"output":out.decode(errors="replace")[-120000:]}
+                                    except asyncio.TimeoutError: proc.kill(); await proc.wait(); result={"returncode":124,"output":f"Timed out after {timeout}s"}
+                            elif name=="web_search":
+                                from ddgs import DDGS
+                                rows=await asyncio.to_thread(lambda:list(DDGS().text(str(args.get("query","")),max_results=max(1,min(int(args.get("limit",8)),12)))))
+                                result={"results":[{"title":x.get("title",""),"url":x.get("href",""),"snippet":x.get("body","")} for x in rows]}
+                            else: result={"error":"Unknown tool"}
+                        except Exception as e: result={"error":str(e)}
+                        yield f"data: {json.dumps({'type':'tool','name':name,'arguments':args,'result':result},ensure_ascii=False)}\n\n"
+                        if p["type"]=="ollama" and text_protocol_call:
+                            history.append({"role":"user","content":f"Tool result from {name}: {json.dumps(result,ensure_ascii=False)}\nContinue inspecting or implementing the task. If another tool is needed, emit one complete JSON tool request."})
+                        elif p["type"]=="ollama":
+                            history.append({"role":"tool","name":name,"content":json.dumps(result,ensure_ascii=False)})
+                        else:
+                            history.append({"role":"tool","tool_call_id":call.get("id",""),"name":name,"content":json.dumps(result,ensure_ascii=False)})
+                yield f"data: {json.dumps({'type':'done'})}\n\n"
+        except Exception as e:
+            detail=str(e).strip() or f"{type(e).__name__}: provider request failed without an error message"
+            yield f"data: {json.dumps({'type':'error','message':detail})}\n\n"
+    return StreamingResponse(events(),media_type="text/event-stream",headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no"})
+
+def _project_export_files(project:Path):
+    base=project.resolve()
+    for item in project.rglob("*"):
+        if not item.is_file() or item.is_symlink(): continue
+        resolved=item.resolve()
+        if resolved==base or base not in resolved.parents: continue
+        yield item, item.relative_to(project)
+
+@app.get("/api/engine/project/{project_id}/export")
+async def engine_project_export(project_id:str, format:str="zip"):
+    project=_project_path(project_id)/"source"
+    fmt=format.lower()
+    if fmt not in {"zip","7z","tar.gz","tar","rar"}: raise HTTPException(400,"Export formats: zip, 7z, tar, tar.gz or rar (requires the RAR command-line encoder).")
+    tmp=Path(tempfile.mkdtemp(prefix="canarry-export-"))
+    try:
+        base=tmp/"project"
+        if fmt=="zip":
+            dest=tmp/"project.zip"
+            with zipfile.ZipFile(dest,"w",zipfile.ZIP_DEFLATED) as z:
+                for f,relative in _project_export_files(project):
+                    z.write(f,relative)
+        elif fmt=="7z":
+            try: import py7zr
+            except ImportError: raise HTTPException(503,"Install py7zr to export 7z archives.")
+            dest=tmp/"project.7z"
+            with py7zr.SevenZipFile(dest,"w") as z:
+                for f,relative in _project_export_files(project): z.write(f,arcname=str(relative))
+        elif fmt=="rar":
+            rar=shutil.which("rar")
+            if not rar: raise HTTPException(503,"RAR export requires the official rar command-line encoder. RAR import remains available with unrar/unar/bsdtar.")
+            dest=tmp/"project.rar"
+            staging=tmp/"rar-source"; staging.mkdir()
+            for f,relative in _project_export_files(project):
+                target=staging/relative;target.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(f,target)
+            run=subprocess.run([rar,"a","-r",str(dest), "."],cwd=str(staging),capture_output=True,text=True,timeout=600)
+            if run.returncode: raise HTTPException(500,"RAR export failed: "+(run.stderr or run.stdout)[-3000:])
+        else:
+            dest=tmp/("project.tar.gz" if fmt=="tar.gz" else "project.tar")
+            with tarfile.open(dest,"w:gz" if fmt=="tar.gz" else "w") as t:
+                for f,relative in _project_export_files(project): t.add(f,arcname=str(relative),recursive=False)
+        return FileResponse(dest,filename=dest.name,background=BackgroundTask(shutil.rmtree,tmp,ignore_errors=True))
+    finally:
+        # FileResponse streams after return; temp directory cleanup is handled by a response background task below.
+        pass
+
 @app.post("/api/chat")
 async def chat(req:ChatRequest):
     p=provider_config();model=req.model
@@ -989,36 +1527,135 @@ async def chat(req:ChatRequest):
     match=re.search(r"(?i)^(?:please\s+)?remember(?:\s+that|\s+this)?\s*[:,-]?\s*(.{8,4000})$",user_text.strip(),re.S)
     if match and setting("memory_enabled",True):add_memory(match.group(1).strip(),"user-approved")
     image_ids_by_message={}
+    archive_workspace_paths={}
     for msg in history:
         ids=msg.get("attachment_ids",[]) if isinstance(msg.get("attachment_ids",[]),list) else []
         if msg is history[-1]:ids=list(dict.fromkeys(ids+req.attachment_ids))
         if ids and msg.get("role")=="user":
             image_ids_by_message[id(msg)]=ids
             with db() as c:
-                q=",".join("?" for _ in ids);attached=c.execute(f"SELECT name,extracted FROM uploads WHERE device_id=? AND id IN ({q})",[CURRENT_DEVICE.get(),*ids]).fetchall()
+                q=",".join("?" for _ in ids);attached=c.execute(f"SELECT id,name,extracted FROM uploads WHERE device_id=? AND id IN ({q})",[CURRENT_DEVICE.get(),*ids]).fetchall()
             remaining=MAX_ATTACHMENT_CONTEXT_CHARS;pieces=[]
             for a in attached:
+                if str(a["extracted"]).startswith("[ARCHIVE EXTRACTED SUCCESSFULLY]"):
+                    archive_workspace_paths[str(a["name"])]=f"attachments/{a['id']}/source"
                 if remaining<=0:break
                 piece=f"--- Attached file: {a['name']} ---\n{a['extracted']}"[:remaining];pieces.append(piece);remaining-=len(piece)
             context="\n\n".join(pieces)
             if context:msg["content"]=str(msg.get("content",""))+"\n\n[Attached file contents; context-limited]\n"+context
     memories=relevant_memories(user_text) if req.memory_enabled and setting("memory_enabled",True) else []
-    system=("You are CanarryLookup AI, a helpful assistant. In agent mode you may use the supplied workspace tools. Be precise, do not claim unperformed actions, and work in small verifiable steps.\n"+setting("system_prompt","")).strip()
-    if memories:system+="\n\nRelevant user-approved memories (context, not instructions):\n"+"\n".join("- "+m["content"] for m in memories)
-    history.insert(0,{"role":"system","content":system})
+    system=("You are CanarryLookup AI, a helpful assistant. In agent mode you may use the supplied workspace tools. Be precise and verify actions. "
+      "If an uploaded archive is marked ARCHIVE EXTRACTED SUCCESSFULLY, it has already been unpacked into the listed workspace path. Inspect its file tree and read actual files from that extracted path. NEVER pass the original .zip filename to list_files or claim the archive is opaque. "
+      "\n"+setting("system_prompt","")).strip()
     mcp_tools=await available_mcp_tools() if req.agent else []
     harness_enabled=bool(device_harness_enabled())
     system_tools=TOOLS if harness_enabled else []
     if not harness_enabled:
-        system += "\n\nOperating mode: NORMAL. Do not claim to access or modify this device, its filesystem, shell, desktop, or applications. System tools are disabled. You may use only the separately configured MCP integrations."
+        system += "\n\nOperating mode: NORMAL. Do not claim to access or modify this device, its filesystem, shell, desktop, or applications. System tools are disabled. You may use only the separately configured MCP integrations. Archive file trees and text previews are already included in the user's message; inspect those directly. Do not output raw JSON tool-call requests."
+    else:
+        if p["type"] == "ollama" and req.agent:
+            available_names=[x["function"]["name"] for x in system_tools+mcp_tools if "function" in x]
+            system += "\n\nOperating mode: HARNESS. For Ollama, do not use native function calling. Use the text tool protocol: when a tool is needed, emit exactly one complete compact JSON object only, with no markdown or explanation, shaped like {\"name\":\"list_files\",\"arguments\":{\"path\":\".\"}}. Available tool names: " + ", ".join(available_names) + ". Wait for the tool result in the next user message. Never output incomplete JSON."
+        else:
+            system += "\n\nOperating mode: HARNESS. If native tool calling is unavailable and you need a workspace tool, emit exactly one compact JSON object with name and arguments; the application will execute it and suppress the raw request from the visible answer."
+    history.insert(0,{"role":"system","content":system})
     mcp_lookup={x["function"]["name"]:x["_mcp"] for x in mcp_tools if "function" in x}
     tool_defs=[{"type":"function","function":x["function"]} for x in mcp_tools if "function" in x]
+    active_archive_root: str | None = None
+
+    def resolve_uploaded_archive_path(requested: str) -> tuple[str | None, str | None]:
+        """Resolve an archive filename emitted by a model to its extracted workspace directory.
+
+        Prefer attachment IDs from this request, then fall back to this device's persisted
+        upload records. This handles tool retries and chat history that lost inline IDs.
+        """
+        raw = str(requested or ".").strip().replace("\\", "/").rstrip("/")
+        if raw.startswith("./"):
+            raw = raw[2:]
+        if not raw or raw == ".":
+            return ".", None
+        for archive_name, extracted_root in archive_workspace_paths.items():
+            name = Path(archive_name).name
+            for candidate in (archive_name, name, Path(name).stem):
+                if raw == candidate:
+                    return extracted_root, None
+                if raw.startswith(candidate + "/"):
+                    return extracted_root + "/" + raw[len(candidate)+1:], None
+        basename = Path(raw).name
+        with db() as c:
+            rows = c.execute(
+                "SELECT id,name,extracted FROM uploads WHERE device_id=? ORDER BY created DESC LIMIT 200",
+                (CURRENT_DEVICE.get(),),
+            ).fetchall()
+        for row in rows:
+            stored_name = Path(str(row["name"])).name
+            if not stored_name.lower().endswith((".zip", ".7z", ".rar", ".tar", ".gz", ".tgz", ".tar.xz", ".tar.bz2")):
+                continue
+            if raw in {str(row["name"]), stored_name, Path(stored_name).stem} or raw.startswith(stored_name + "/"):
+                if not str(row["extracted"] or "").startswith("[ARCHIVE EXTRACTED SUCCESSFULLY]"):
+                    detail = str(row["extracted"] or "Archive extraction did not produce an index.")[:1200]
+                    return None, f"The uploaded archive '{stored_name}' is present, but extraction failed: {detail}"
+                rel = f"attachments/{row['id']}/source"
+                if raw.startswith(stored_name + "/"):
+                    rel += "/" + raw[len(stored_name)+1:]
+                if inside_workspace(rel).is_dir():
+                    return rel, None
+                return None, f"The archive index exists, but its extracted folder is missing: {rel}. Re-upload the archive to rebuild it."
+        return None, f"No extracted upload named '{basename}' was found for this device. Attach the ZIP to this chat again, or import it in Project Engineer."
+
+    def resolve_active_archive_relative_path(requested: str) -> str:
+        raw = str(requested or ".").strip()
+        if active_archive_root and raw not in {"", "."}:
+            normalized = raw.replace("\\", "/").lstrip("/")
+            candidate = f"{active_archive_root}/{normalized}"
+            try:
+                if inside_workspace(candidate).exists():
+                    return candidate
+            except Exception:
+                pass
+        return raw or "."
+
     async def run_agent_tool(name,args):
+        nonlocal active_archive_root
+        aliases={"project_list_files":"list_files","project_read_file":"read_file","project_write_file":"write_file","project_run_command":"run_command"}
+        name=aliases.get(name,name)
+        args=dict(args or {})
+        if name == "list_files":
+            requested = str(args.get("path", ".")).strip()
+            if requested != ".":
+                resolved, diagnostic = resolve_uploaded_archive_path(requested)
+                if resolved:
+                    args["path"] = resolved
+                    # Remember the root so subsequent src/foo.js paths are archive-relative.
+                    if resolved.startswith("attachments/") and resolved.endswith("/source"):
+                        active_archive_root = resolved
+                elif diagnostic and requested.lower().endswith((".zip", ".7z", ".rar", ".tar", ".gz", ".tgz", ".tar.xz", ".tar.bz2")):
+                    return {"error": diagnostic}
+                else:
+                    args["path"] = resolve_active_archive_relative_path(requested)
+            elif active_archive_root:
+                args["path"] = active_archive_root
+        elif name in {"read_file", "write_file"} and args.get("path"):
+            requested = str(args["path"])
+            resolved, diagnostic = resolve_uploaded_archive_path(requested)
+            if resolved:
+                args["path"] = resolved
+                if resolved.startswith("attachments/") and resolved.endswith("/source"):
+                    active_archive_root = resolved
+            elif diagnostic and requested.lower().endswith((".zip", ".7z", ".rar", ".tar", ".gz", ".tgz", ".tar.xz", ".tar.bz2")):
+                return {"error": diagnostic}
+            else:
+                args["path"] = resolve_active_archive_relative_path(requested)
         if name in mcp_lookup: return await invoke_mcp_tool(mcp_lookup[name],args)
         return invoke_tool(name,args) if harness_enabled else {"error":"System tools are disabled in Normal mode. Enable Harness mode on this device to grant direct system access."}
     async def events():
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(300,connect=15),headers=auth_headers(p)) as client:
+            # Do not time out local Ollama inference: prompt evaluation can be very slow
+            # on older CPUs. Keep connection establishment bounded, but wait indefinitely
+            # for response bytes. Cloud providers retain the existing 5-minute read limit.
+            provider_timeout = (httpx.Timeout(None, connect=15) if p["type"] == "ollama"
+                                else httpx.Timeout(300, connect=15))
+            async with httpx.AsyncClient(timeout=provider_timeout,headers=auth_headers(p)) as client:
                 if p["type"]=="ollama":
                     for msg in history:
                         if msg.get("role")=="user":
@@ -1026,28 +1663,60 @@ async def chat(req:ChatRequest):
                             if ims:msg["images"]=[x["data"] for x in ims]
                     for round_no in range(MAX_TOOL_ROUNDS+1):
                         payload={"model":model,"messages":[{k:v for k,v in m.items() if k in {"role","content","images","tool_calls","name"}} for m in history],"stream":True,"options":{"temperature":temperature,"num_predict":setting("max_output_tokens",512)}}
-                        if req.agent:payload["tools"]=system_tools+tool_defs
+                        use_ollama_text_tools=bool(req.agent and harness_enabled and p["type"]=="ollama")
+                        if req.agent and not use_ollama_text_tools:payload["tools"]=system_tools+tool_defs
                         async with client.stream("POST",f"{p['base_url']}/api/chat",json=payload) as response:
                             if response.status_code>=400:
                                 body=await response.aread();yield f"data: {json.dumps({'type':'error','message':body.decode(errors='replace')})}\n\n";return
-                            final={}
+                            final={}; streamed_content=""
                             async for line in response.aiter_lines():
                                 if not line:continue
                                 try:chunk=json.loads(line)
                                 except json.JSONDecodeError:continue
+                                if chunk.get("error"):
+                                    yield f"data: {json.dumps({'type':'error','message':str(chunk.get('error'))})}\n\n"
+                                    return
                                 msg=chunk.get("message",{})
-                                if msg.get("content"):yield f"data: {json.dumps({'type':'token','text':msg['content']})}\n\n"
+                                if msg.get("content"):
+                                    streamed_content += msg["content"]
+                                    yield f"data: {json.dumps({'type':'token','text':msg['content']})}\n\n"
                                 if msg.get("tool_calls"):final.setdefault("tool_calls",[]).extend(msg["tool_calls"])
                                 if chunk.get("done"):break
                         calls=final.get("tool_calls",[])
+                        text_protocol_call=False
+                        if not calls and use_ollama_text_tools and streamed_content:
+                            allowed_names=[x["function"]["name"] for x in system_tools+tool_defs if "function" in x]
+                            fallback=_parse_engine_tool_request(streamed_content,allowed_names)
+                            if fallback:
+                                calls=[fallback]
+                                text_protocol_call=True
+                                yield f"data: {json.dumps({'type':'clear_response'})}\n\n"
+                            elif (streamed_content.lstrip().startswith(("{", "```json", "<canarry_tool>")) or re.match(r'(?is)^\s*\{\s*["\']name["\']\s*:',streamed_content)):
+                                history.append({"role":"assistant","content":streamed_content})
+                                history.append({"role":"user","content":"Your previous tool request was incomplete or invalid JSON and was not executed. Re-emit exactly one complete compact JSON object with a valid tool name and arguments. Close every brace and quote. Do not use markdown."})
+                                yield f"data: {json.dumps({'type':'notice','message':'The model emitted incomplete tool JSON. Asked it to retry with a complete request.'})}\n\n"
+                                continue
+                        elif not calls and req.agent and harness_enabled and streamed_content:
+                            fallback=_parse_engine_tool_request(streamed_content,[x["function"]["name"] for x in system_tools+tool_defs if "function" in x])
+                            if fallback:
+                                calls=[fallback]
+                                text_protocol_call=True
+                                yield f"data: {json.dumps({'type':'clear_response'})}\n\n"
                         if not calls:break
-                        history.append({"role":"assistant","content":"","tool_calls":calls})
+                        if text_protocol_call:
+                            history.append({"role":"assistant","content":streamed_content or ""})
+                        else:
+                            history.append({"role":"assistant","content":streamed_content or "", "tool_calls":calls})
                         for call in calls:
                             fn=call.get("function",{});name=fn.get("name","");args=fn.get("arguments",{}) or {}
                             if isinstance(args,str):
                                 try:args=json.loads(args)
                                 except Exception:args={}
-                            result=await run_agent_tool(name,args);yield f"data: {json.dumps({'type':'tool','name':name,'arguments':args,'result':result})}\n\n";history.append({"role":"tool","content":json.dumps(result,ensure_ascii=False),"name":name})
+                            result=await run_agent_tool(name,args);yield f"data: {json.dumps({'type':'tool','name':name,'arguments':args,'result':result})}\n\n"
+                            if p["type"]=="ollama" and text_protocol_call:
+                                history.append({"role":"user","content":f"Tool result from {name}: {json.dumps(result,ensure_ascii=False)}\nContinue the task. If another tool is needed, emit one complete JSON tool request."})
+                            else:
+                                history.append({"role":"tool","content":json.dumps(result,ensure_ascii=False),"name":name})
                         if round_no==MAX_TOOL_ROUNDS:yield f"data: {json.dumps({'type':'notice','message':'Agent tool-round limit reached.'})}\n\n"
                 elif p["type"]=="anthropic":
                     anth_history=[]
@@ -1154,6 +1823,10 @@ async def chat(req:ChatRequest):
                                 if raw=="[DONE]":break
                                 try:chunk=json.loads(raw)
                                 except json.JSONDecodeError:continue
+                                if chunk.get("error"):
+                                    err=chunk.get("error")
+                                    yield f"data: {json.dumps({'type':'error','message':str(err.get('message') if isinstance(err,dict) else err)})}\n\n"
+                                    return
                                 for choice in chunk.get("choices",[]):
                                     delta=choice.get("delta",{});finish=choice.get("finish_reason") or finish
                                     if delta.get("content"):yield f"data: {json.dumps({'type':'token','text':delta['content']})}\n\n"
@@ -1173,7 +1846,9 @@ async def chat(req:ChatRequest):
                         if round_no==MAX_TOOL_ROUNDS:yield f"data: {json.dumps({'type':'notice','message':'Agent tool-round limit reached.'})}\n\n"
             yield f"data: {json.dumps({'type':'chat_id','chat_id':cid})}\n\n";yield f"data: {json.dumps({'type':'done'})}\n\n"
         except httpx.ConnectError:yield f"data: {json.dumps({'type':'error','message':f'Cannot connect to {p["type"]} provider at {p["base_url"]}. Check the endpoint and provider service.'})}\n\n"
-        except Exception as e:yield f"data: {json.dumps({'type':'error','message':str(e)})}\n\n"
+        except Exception as e:
+            detail=str(e).strip() or f"{type(e).__name__}: provider request failed without an error message"
+            yield f"data: {json.dumps({'type':'error','message':detail})}\n\n"
     return StreamingResponse(events(),media_type="text/event-stream",headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no"})
 
 @app.post("/api/images/generations")
